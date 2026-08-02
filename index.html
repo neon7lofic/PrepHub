@@ -1,0 +1,2117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PrepHub — Test &amp; DPP Manager</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&display=swap');
+:root{
+  --bg:#f0f2f5;--surface:#fff;--surface2:#f7f8fa;--sidebar:#0f1923;--sidebar-hover:#1a2736;--sidebar-active:#0d6e5c;
+  --ink:#0f1923;--ink2:#344054;--ink3:#667085;--ink4:#98a2b3;
+  --border:#e4e7ec;--border2:#d0d5dd;
+  --brand:#0d6e5c;--brand2:#095747;--brand-lt:#e6f5f1;--brand-glow:rgba(13,110,92,.15);
+  --gold:#92400e;--gold-lt:#fef3c7;--gold-bg:#fffbeb;
+  --green:#15803d;--green-lt:#dcfce7;
+  --red:#b91c1c;--red-lt:#fee2e2;
+  --purple:#6d28d9;--purple-lt:#ede9fe;
+  --orange:#c2410c;--orange-lt:#ffedd5;
+  --teal:#0e7490;--teal-lt:#cffafe;
+  --blue:#1c4ed8;--blue-lt:#eff3ff;
+  --r:10px;--r2:14px;--r3:20px;
+  --sh:0 1px 3px rgba(0,0,0,.07),0 1px 2px rgba(0,0,0,.05);
+  --sh2:0 4px 20px rgba(0,0,0,.09);--sh3:0 8px 40px rgba(0,0,0,.14);
+  --sidebar-w:240px;--header-h:60px;--trans:.2s ease;
+}
+.dark{
+  --bg:#080e18;--surface:#0f1923;--surface2:#111827;--sidebar:#070d15;--sidebar-hover:#111827;
+  --ink:#e2e8f0;--ink2:#cbd5e1;--ink3:#94a3b8;--ink4:#64748b;
+  --border:#1e293b;--border2:#334155;--brand-lt:#0b2e26;--gold-lt:#451a03;--gold-bg:#1c1108;
+  --green-lt:#052e16;--red-lt:#450a0a;--purple-lt:#2e1065;--orange-lt:#431407;--teal-lt:#0c3340;--blue-lt:#1e3a5f;
+  --sh:0 1px 3px rgba(0,0,0,.3);--sh2:0 4px 20px rgba(0,0,0,.4);--sh3:0 8px 40px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;font-family:'Inter',sans-serif;font-size:14px;background:var(--bg);color:var(--ink);transition:background var(--trans),color var(--trans);}
+::-webkit-scrollbar{width:5px;height:5px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:10px;}
+#shell{display:none;height:100vh;overflow:hidden;}
+#shell.show{display:flex;}
+#sidebar{width:var(--sidebar-w);background:var(--sidebar);flex-shrink:0;display:flex;flex-direction:column;overflow:hidden;transition:width var(--trans);z-index:50;}
+#sidebar.collapsed{width:60px;}
+#sidebar.collapsed .sb-label,#sidebar.collapsed .sb-badge,#sidebar.collapsed .sb-logo-text,#sidebar.collapsed .sb-user-info,#sidebar.collapsed .sb-section{display:none!important;}
+#main-area{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+#topbar{height:var(--header-h);background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;gap:12px;flex-shrink:0;box-shadow:var(--sh);}
+#content{flex:1;overflow-y:auto;padding:24px;}
+.sb-logo{padding:18px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(255,255,255,.07);flex-shrink:0;}
+.sb-logo-icon{width:32px;height:32px;background:var(--brand);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0;}
+.sb-logo-text{font-family:'Crimson Pro',serif;font-size:1.2rem;color:#fff;white-space:nowrap;overflow:hidden;}
+.sb-logo-text span{display:block;font-size:.65rem;font-family:'Inter',sans-serif;color:#64748b;font-weight:400;letter-spacing:.06em;text-transform:uppercase;margin-top:-2px;}
+.sb-section{padding:8px 8px 4px;font-size:.62rem;color:#475569;letter-spacing:.08em;text-transform:uppercase;font-weight:600;white-space:nowrap;overflow:hidden;}
+.sb-item{display:flex;align-items:center;gap:10px;padding:9px 12px;margin:1px 6px;border-radius:8px;cursor:pointer;transition:background var(--trans);color:#94a3b8;user-select:none;}
+.sb-item:hover{background:var(--sidebar-hover);color:#e2e8f0;}
+.sb-item.active{background:var(--sidebar-active);color:#fff;}
+.sb-item .sb-icon{width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:.95rem;flex-shrink:0;}
+.sb-item .sb-label{white-space:nowrap;overflow:hidden;font-size:.82rem;font-weight:500;}
+.sb-item .sb-badge{margin-left:auto;background:var(--red);color:#fff;border-radius:10px;font-size:.65rem;padding:1px 6px;font-weight:700;flex-shrink:0;}
+.sb-divider{height:1px;background:rgba(255,255,255,.06);margin:8px 12px;}
+.sb-bottom{margin-top:auto;border-top:1px solid rgba(255,255,255,.06);}
+.sb-user{display:flex;align-items:center;gap:10px;padding:14px 12px;cursor:pointer;transition:background var(--trans);}
+.sb-user:hover{background:var(--sidebar-hover);}
+.sb-avatar{width:32px;height:32px;border-radius:8px;background:var(--brand);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;color:#fff;flex-shrink:0;}
+.sb-user-info{overflow:hidden;}
+.sb-user-info strong{display:block;color:#e2e8f0;font-size:.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sb-user-info small{color:#64748b;font-size:.7rem;}
+#sidebarToggle{background:none;border:none;cursor:pointer;color:var(--ink3);font-size:1.1rem;padding:6px;border-radius:6px;transition:background var(--trans);}
+#sidebarToggle:hover{background:var(--bg);}
+.topbar-title{font-family:'Crimson Pro',serif;font-size:1.15rem;font-weight:600;color:var(--ink);flex:1;}
+.tb-btn{background:none;border:1px solid var(--border);border-radius:8px;padding:7px 10px;cursor:pointer;color:var(--ink3);transition:all var(--trans);font-size:.9rem;position:relative;}
+.tb-btn:hover{background:var(--bg);color:var(--ink);}
+.page-header{margin-bottom:22px;}
+.page-header h2{font-family:'Crimson Pro',serif;font-size:1.6rem;font-weight:600;color:var(--ink);}
+.page-header p{color:var(--ink3);font-size:.82rem;margin-top:3px;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:22px;box-shadow:var(--sh);}
+.card-sm{padding:16px;}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:10px;}
+.card-header h3{font-size:.95rem;font-weight:600;}
+.field{margin-bottom:14px;}
+.field label{display:flex;align-items:center;gap:5px;font-size:.75rem;font-weight:600;color:var(--ink2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em;}
+.field label .req{color:var(--red);font-size:.8rem;}
+.field input,.field textarea,.field select{width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-family:'Inter',sans-serif;font-size:.87rem;background:var(--surface);color:var(--ink);outline:none;transition:border var(--trans),box-shadow var(--trans);}
+.field input:focus,.field textarea:focus,.field select:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-glow);}
+.field textarea{resize:vertical;min-height:80px;}
+.field .hint{font-size:.72rem;color:var(--ink4);margin-top:4px;}
+.pw-wrap{position:relative;}
+.pw-wrap input{padding-right:42px;}
+.pw-eye{position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--ink4);font-size:.9rem;padding:4px;}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:8px;font-size:.82rem;font-weight:600;border:none;cursor:pointer;transition:all var(--trans);font-family:'Inter',sans-serif;letter-spacing:.01em;white-space:nowrap;}
+.btn-primary{background:var(--brand);color:#fff;}
+.btn-primary:hover{background:var(--brand2);box-shadow:0 2px 8px rgba(13,110,92,.3);}
+.btn-ghost{background:transparent;color:var(--ink2);border:1.5px solid var(--border);}
+.btn-ghost:hover{background:var(--bg);border-color:var(--border2);}
+.btn-danger{background:var(--red-lt);color:var(--red);}
+.btn-danger:hover{background:#fca5a5;}
+.btn-success{background:var(--green-lt);color:var(--green);}
+.btn-success:hover{background:#86efac;}
+.btn-gold{background:var(--gold-lt);color:var(--gold);}
+.btn-purple{background:var(--purple-lt);color:var(--purple);}
+.btn-teal{background:var(--teal-lt);color:var(--teal);}
+.btn-blue{background:var(--blue-lt);color:var(--blue);}
+.btn-sm{padding:6px 12px;font-size:.77rem;}
+.btn-xs{padding:4px 9px;font-size:.72rem;}
+.btn-full{width:100%;justify-content:center;}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+.badge{display:inline-flex;align-items:center;gap:3px;padding:3px 9px;border-radius:20px;font-size:.7rem;font-weight:600;letter-spacing:.02em;}
+.badge::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.7;}
+.b-pending{background:var(--gold-lt);color:#92400e;}
+.b-approved{background:var(--green-lt);color:var(--green);}
+.b-rejected{background:var(--red-lt);color:var(--red);}
+.b-admin{background:var(--purple-lt);color:var(--purple);}
+.b-teacher{background:var(--blue-lt);color:var(--blue);}
+.b-student{background:var(--teal-lt);color:var(--teal);}
+.b-dpp{background:var(--orange-lt);color:var(--orange);}
+.b-series{background:var(--purple-lt);color:var(--purple);}
+.b-live{background:var(--green-lt);color:var(--green);}
+.b-draft{background:var(--border);color:var(--ink3);}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
+@media(max-width:700px){.g2,.g3,.g4{grid-template-columns:1fr;}}
+@media(max-width:1000px){.g4{grid-template-columns:1fr 1fr;}.g3{grid-template-columns:1fr 1fr;}}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:18px 20px;position:relative;overflow:hidden;transition:box-shadow var(--trans);}
+.stat-card:hover{box-shadow:var(--sh2);}
+.stat-card .sc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+.stat-card .sc-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;}
+.stat-card .sc-num{font-family:'Crimson Pro',serif;font-size:2.2rem;font-weight:600;line-height:1;color:var(--ink);}
+.stat-card .sc-label{font-size:.75rem;color:var(--ink3);font-weight:500;margin-top:3px;}
+.stat-card .sc-bar{position:absolute;bottom:0;left:0;right:0;height:3px;border-radius:0 0 var(--r2) var(--r2);}
+.item-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:18px;margin-bottom:12px;transition:box-shadow var(--trans),border-color var(--trans);}
+.item-card:hover{box-shadow:var(--sh2);border-color:var(--border2);}
+.item-card .ic-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.item-card .ic-title{font-weight:700;font-size:.95rem;color:var(--ink);line-height:1.3;}
+.item-card .ic-meta{font-size:.77rem;color:var(--ink3);margin-top:5px;display:flex;gap:14px;flex-wrap:wrap;}
+.item-card .ic-meta span{display:flex;align-items:center;gap:4px;}
+.item-card .ic-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);}
+.sep{height:1px;background:var(--border);margin:18px 0;}
+.empty{text-align:center;padding:50px 20px;}
+.empty .e-icon{font-size:2.5rem;margin-bottom:10px;}
+.empty .e-title{font-weight:600;color:var(--ink2);font-size:.95rem;}
+.empty .e-sub{color:var(--ink4);font-size:.82rem;margin-top:4px;}
+.page-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:12px 16px;box-shadow:var(--sh);}
+.search-box{display:flex;align-items:center;gap:8px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:7px 12px;flex:1;min-width:180px;}
+.search-box:focus-within{border-color:var(--brand);}
+.search-box input{border:none;background:transparent;outline:none;font-family:'Inter',sans-serif;font-size:.82rem;color:var(--ink);width:100%;}
+.filter-btn{padding:6px 12px;border-radius:20px;border:1.5px solid var(--border);background:var(--surface);font-size:.75rem;font-weight:600;cursor:pointer;color:var(--ink3);transition:all var(--trans);}
+.filter-btn:hover,.filter-btn.active{background:var(--brand-lt);color:var(--brand);border-color:var(--brand);}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:300;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(3px);}
+.overlay.hidden{display:none;}
+.modal{background:var(--surface);border-radius:var(--r3);padding:28px;width:100%;max-width:480px;box-shadow:var(--sh3);border:1px solid var(--border);animation:popIn .2s ease;max-height:90vh;overflow-y:auto;}
+@keyframes popIn{from{transform:scale(.95);opacity:0;}to{transform:scale(1);opacity:1;}}
+.modal h3{font-family:'Crimson Pro',serif;font-size:1.3rem;margin-bottom:5px;}
+.modal .modal-sub{font-size:.8rem;color:var(--ink3);margin-bottom:18px;}
+.modal-btns{display:flex;gap:10px;margin-top:18px;justify-content:flex-end;}
+.modal-wide{max-width:640px;}
+.modal-xl{max-width:900px;}
+#toast{position:fixed;bottom:24px;right:24px;z-index:999;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
+.toast-msg{background:var(--ink);color:#fff;padding:11px 16px;border-radius:10px;font-size:.82rem;font-weight:500;box-shadow:var(--sh3);display:flex;align-items:center;gap:8px;animation:slideUp .25s ease,fadeOut .25s ease 2.75s forwards;pointer-events:auto;max-width:320px;}
+.toast-msg.success{background:var(--green);}
+.toast-msg.error{background:var(--red);}
+.toast-msg.info{background:var(--brand);}
+.toast-msg.warn{background:#d97706;}
+@keyframes slideUp{from{transform:translateY(16px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+@keyframes fadeOut{to{opacity:0;transform:translateY(-8px);}}
+#authScreen{position:fixed;inset:0;background:var(--bg);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto;}
+.auth-box{width:100%;max-width:960px;background:var(--surface);border-radius:24px;overflow:hidden;display:flex;box-shadow:var(--sh3);border:1px solid var(--border);margin:auto;}
+.auth-left{width:320px;flex-shrink:0;background:linear-gradient(160deg,#0f1923 0%,#0d4a3e 100%);padding:40px 32px;display:flex;flex-direction:column;}
+.auth-left .al-logo{display:flex;align-items:center;gap:10px;margin-bottom:40px;}
+.auth-left .al-logo-icon{width:36px;height:36px;background:var(--brand);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;}
+.auth-left .al-logo-text{font-family:'Crimson Pro',serif;font-size:1.2rem;color:#fff;}
+.auth-left h2{font-family:'Crimson Pro',serif;font-size:1.7rem;color:#fff;line-height:1.3;margin-bottom:12px;}
+.auth-left p{font-size:.82rem;color:#94a3b8;line-height:1.7;margin-bottom:28px;}
+.auth-left .al-feat{display:flex;flex-direction:column;gap:12px;margin-top:auto;}
+.auth-left .al-feat-item{display:flex;align-items:center;gap:10px;font-size:.78rem;color:#94a3b8;}
+.auth-right{flex:1;padding:36px 32px;overflow-y:auto;max-height:92vh;}
+.auth-tabs{display:flex;gap:2px;background:var(--bg);border-radius:10px;padding:4px;margin-bottom:22px;border:1px solid var(--border);flex-wrap:wrap;}
+.auth-tab{flex:1;text-align:center;padding:8px 6px;border-radius:7px;cursor:pointer;font-size:.78rem;font-weight:600;color:var(--ink3);transition:all var(--trans);white-space:nowrap;}
+.auth-tab.active{background:var(--surface);color:var(--brand);box-shadow:var(--sh);}
+.role-pick{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;}
+.role-opt{border:1.5px solid var(--border);border-radius:10px;padding:12px;text-align:center;cursor:pointer;transition:all var(--trans);}
+.role-opt:hover{border-color:var(--brand);}
+.role-opt.active{border-color:var(--brand);background:var(--brand-lt);}
+.role-opt .ro-icon{font-size:1.3rem;}
+.role-opt .ro-label{font-size:.78rem;font-weight:600;margin-top:4px;}
+.qcard{border:1.5px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px;background:var(--surface2);}
+.qcard-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+.opt-row{display:flex;align-items:center;gap:8px;margin-bottom:7px;}
+.opt-row input[type=text]{flex:1;}
+.timer-box{font-family:'Crimson Pro',serif;font-size:1.4rem;font-weight:700;color:var(--red);background:var(--red-lt);padding:6px 16px;border-radius:10px;}
+.qnav-btn{width:34px;height:34px;border-radius:8px;border:1.5px solid var(--border);background:var(--surface);cursor:pointer;font-size:.78rem;font-weight:600;color:var(--ink2);}
+.qnav-btn.answered{background:var(--brand-lt);border-color:var(--brand);color:var(--brand);}
+.qnav-btn.current{background:var(--brand);color:#fff;border-color:var(--brand);}
+.bar-chart{display:flex;align-items:flex-end;gap:8px;height:140px;padding-top:10px;}
+.bar-chart .bar-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;}
+.bar-chart .bar-fill{width:100%;border-radius:6px 6px 0 0;background:var(--brand);transition:height .4s ease;position:relative;min-height:3px;}
+.bar-chart .bar-lbl{font-size:.65rem;color:var(--ink3);margin-top:6px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+.bar-chart .bar-val{font-size:.65rem;font-weight:700;color:var(--ink2);margin-bottom:3px;}
+table.datatable{width:100%;border-collapse:collapse;font-size:.82rem;}
+table.datatable th{text-align:left;padding:9px 10px;border-bottom:2px solid var(--border);color:var(--ink3);font-size:.72rem;text-transform:uppercase;letter-spacing:.03em;}
+table.datatable td{padding:10px 10px;border-bottom:1px solid var(--border);color:var(--ink2);}
+table.datatable tr:hover td{background:var(--bg);}
+.progress-track{height:8px;background:var(--border);border-radius:6px;overflow:hidden;}
+.progress-fill{height:100%;border-radius:6px;background:var(--brand);}
+.tag-chip{display:inline-flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:4px 10px;font-size:.75rem;margin:2px 4px 2px 0;}
+.tag-chip button{background:none;border:none;cursor:pointer;color:var(--red);font-weight:700;}
+.b-open{background:var(--gold-lt);color:#92400e;}
+.b-inprogress{background:var(--blue-lt);color:var(--blue);}
+.b-resolved{background:var(--green-lt);color:var(--green);}
+.tb-avatar-btn{width:36px;height:36px;border-radius:9px;background:var(--brand);color:#fff;border:none;cursor:pointer;font-weight:700;font-size:.9rem;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.ticket-reply-box{background:var(--brand-lt);border-left:3px solid var(--brand);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:.8rem;}
+.profile-modal-head{display:flex;align-items:center;gap:14px;margin-bottom:18px;}
+.profile-modal-avatar{width:56px;height:56px;border-radius:14px;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.4rem;font-weight:700;flex-shrink:0;}
+.profile-tabs{display:flex;gap:2px;background:var(--bg);border-radius:10px;padding:4px;margin-bottom:18px;border:1px solid var(--border);}
+.profile-tab{flex:1;text-align:center;padding:7px 6px;border-radius:7px;cursor:pointer;font-size:.76rem;font-weight:600;color:var(--ink3);transition:all var(--trans);}
+.profile-tab.active{background:var(--surface);color:var(--brand);box-shadow:var(--sh);}
+</style>
+</head>
+<body>
+
+<div id="toast"></div>
+
+<!-- AUTH SCREEN -->
+<div id="authScreen">
+  <div class="auth-box">
+    <div class="auth-left">
+      <div class="al-logo"><div class="al-logo-icon">📘</div><div class="al-logo-text">PrepHub</div></div>
+      <h2 id="authHeadline">Tests &amp; DPPs,<br>organized for<br>every classroom.</h2>
+      <p>Teachers build DPPs and test series with MCQ, multi-select and integer-answer questions. Students attempt tests and track their progress. Admins approve every account.</p>
+      <div class="al-feat">
+        <div class="al-feat-item">✅ &nbsp;Admin-approved accounts</div>
+        <div class="al-feat-item">📝 &nbsp;MCQ, Multi-select &amp; Integer questions</div>
+        <div class="al-feat-item">📊 &nbsp;Per-test &amp; per-student analytics</div>
+        <div class="al-feat-item">🏫 &nbsp;School &amp; class based targeting</div>
+      </div>
+    </div>
+    <div class="auth-right">
+      <div class="auth-tabs">
+        <div class="auth-tab active" id="tabLoginBtn" onclick="switchAuthTab('login')">Log In</div>
+        <div class="auth-tab" id="tabRegisterBtn" onclick="switchAuthTab('register')">Register</div>
+      </div>
+
+      <!-- LOGIN -->
+      <div id="loginPane">
+        <div class="field"><label>Email</label><input type="email" id="loginEmail" placeholder="you@example.com"></div>
+        <div class="field"><label>Password</label>
+          <div class="pw-wrap"><input type="password" id="loginPassword" placeholder="••••••••">
+          <button class="pw-eye" onclick="togglePw('loginPassword')">👁</button></div>
+        </div>
+        <button class="btn btn-primary btn-full" id="loginBtn" onclick="doLogin()">Log In</button>
+        <p style="font-size:.72rem;color:var(--ink4);margin-top:14px;text-align:center;">First time setting this up? The very first account you register becomes the admin automatically.</p>
+        <p style="font-size:.72rem;color:var(--ink4);margin-top:6px;text-align:center;">Trouble logging in? <a href="#" onclick="openHelpSupport('login');return false;" style="color:var(--brand);font-weight:600;">Get help</a> or <a href="#" onclick="openHelpSupport('track');return false;" style="color:var(--brand);font-weight:600;">track a query</a></p>
+      </div>
+
+      <!-- REGISTER -->
+      <div id="registerPane" style="display:none;">
+        <div class="field"><label>I am a</label>
+          <div class="role-pick">
+            <div class="role-opt active" id="roleOptTeacher" onclick="pickRole('teacher')"><div class="ro-icon">🧑‍🏫</div><div class="ro-label">Teacher</div></div>
+            <div class="role-opt" id="roleOptStudent" onclick="pickRole('student')"><div class="ro-icon">🎓</div><div class="ro-label">Student</div></div>
+          </div>
+        </div>
+        <div class="g2">
+          <div class="field"><label>Full Name <span class="req">*</span></label><input type="text" id="regName" placeholder="Full name"></div>
+          <div class="field"><label>Email <span class="req">*</span></label><input type="email" id="regEmail" placeholder="you@example.com"></div>
+        </div>
+        <div class="g2">
+          <div class="field"><label>Password <span class="req">*</span></label>
+            <div class="pw-wrap"><input type="password" id="regPassword" placeholder="min 6 chars"><button class="pw-eye" onclick="togglePw('regPassword')">👁</button></div>
+          </div>
+          <div class="field"><label>Phone</label><input type="text" id="regPhone" placeholder="Optional"></div>
+        </div>
+        <div class="g2">
+          <div class="field"><label>School</label><select id="regSchool"></select></div>
+          <div class="field"><label>Class</label><select id="regClass"></select></div>
+        </div>
+        <div class="field" id="regSubjectField"><label>Subject you teach</label><input type="text" id="regSubject" placeholder="e.g. Mathematics"></div>
+        <button class="btn btn-primary btn-full" id="registerBtn" onclick="doRegister()">Create Account</button>
+        <p style="font-size:.72rem;color:var(--ink4);margin-top:12px;text-align:center;">New accounts need admin approval before you can log in. If your school/class isn't listed yet, register anyway — admin can assign it later.</p>
+        <p style="font-size:.72rem;color:var(--ink4);margin-top:6px;text-align:center;">Have a question? <a href="#" onclick="openHelpSupport('login');return false;" style="color:var(--brand);font-weight:600;">Raise a query</a></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN SHELL -->
+<div id="shell">
+  <div id="sidebar">
+    <div class="sb-logo">
+      <div class="sb-logo-icon">📘</div>
+      <div class="sb-logo-text">PrepHub<span>TEST &amp; DPP MANAGER</span></div>
+    </div>
+    <div id="navArea" style="flex:1;overflow-y:auto;padding-top:8px;"></div>
+    <div class="sb-bottom">
+      <div class="sb-user" onclick="goPage('profile')">
+        <div class="sb-avatar" id="sbAvatar">?</div>
+        <div class="sb-user-info"><strong id="sbName">—</strong><small id="sbRole">—</small></div>
+      </div>
+    </div>
+  </div>
+  <div id="main-area">
+    <div id="topbar">
+      <button id="sidebarToggle" onclick="toggleSidebar()">☰</button>
+      <div class="topbar-title" id="pageTitle">Dashboard</div>
+      <button class="tb-btn" onclick="toggleDark()" title="Toggle dark mode">🌙</button>
+      <button class="tb-avatar-btn" id="tbAvatarBtn" onclick="openProfileModal()" title="My Account">?</button>
+      <button class="tb-btn" onclick="doLogout()" title="Log out">⏻</button>
+    </div>
+    <div id="content"></div>
+  </div>
+</div>
+
+<!-- ACCOUNT / PROFILE MODAL -->
+<div class="overlay hidden" id="profileModalOverlay">
+  <div class="modal modal-wide">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+      <div class="profile-modal-head">
+        <div class="profile-modal-avatar" id="pmAvatar">?</div>
+        <div>
+          <h3 id="pmName" style="margin-bottom:2px;">—</h3>
+          <div style="font-size:.78rem;color:var(--ink3);" id="pmEmail">—</div>
+          <span class="badge" id="pmRoleBadge" style="margin-top:6px;"></span>
+        </div>
+      </div>
+      <button class="btn btn-ghost btn-xs" onclick="closeProfileModal()">✕</button>
+    </div>
+    <div class="profile-tabs">
+      <div class="profile-tab active" id="pmTabInfo" onclick="switchProfileModalTab('info')">Account Info</div>
+      <div class="profile-tab" id="pmTabStats" onclick="switchProfileModalTab('stats')">My Stats</div>
+      <div class="profile-tab" id="pmTabSecurity" onclick="switchProfileModalTab('security')">Security</div>
+    </div>
+    <div id="pmContent"></div>
+  </div>
+</div>
+
+<!-- GENERIC CONFIRM MODAL -->
+<div class="overlay hidden" id="confirmOverlay">
+  <div class="modal">
+    <h3 id="confirmTitle">Are you sure?</h3>
+    <p class="modal-sub" id="confirmSub"></p>
+    <div class="modal-btns">
+      <button class="btn btn-ghost" onclick="closeConfirm()">Cancel</button>
+      <button class="btn btn-danger" id="confirmActionBtn">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- HELP & SUPPORT (available before login) -->
+<div class="overlay hidden" id="helpSupportOverlay" style="z-index:600;">
+  <div class="modal modal-wide">
+    <div class="auth-tabs" style="margin-bottom:18px;">
+      <div class="auth-tab active" id="hsTabSubmitBtn" onclick="hsSwitchTab('submit')">📨 Raise a Query</div>
+      <div class="auth-tab" id="hsTabTrackBtn" onclick="hsSwitchTab('track')">🔍 Track a Query</div>
+    </div>
+
+    <!-- SUBMIT -->
+    <div id="hsPanelSubmit">
+      <h3>Help &amp; Support</h3>
+      <p class="modal-sub">Raise a query or issue — no login needed. You'll get a ticket number to track it.</p>
+      <div id="hsSubmitForm">
+        <div class="g2">
+          <div class="field"><label>Your Name <span class="req">*</span></label><input type="text" id="hsName" placeholder="Full name"></div>
+          <div class="field"><label>Contact Email <span class="req">*</span></label><input type="email" id="hsEmail" placeholder="you@example.com"></div>
+        </div>
+        <div class="g2">
+          <div class="field"><label>Phone (optional)</label><input type="text" id="hsPhone" placeholder="Optional"></div>
+          <div class="field"><label>Category</label>
+            <select id="hsCategory">
+              <option value="Login/Registration">Login / Registration Issue</option>
+              <option value="Account">Account / Approval</option>
+              <option value="Bug">Bug / Technical Issue</option>
+              <option value="Test Issue">Test / Question Issue</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+        </div>
+        <div class="field"><label>Subject <span class="req">*</span></label><input type="text" id="hsSubject" placeholder="Short summary"></div>
+        <div class="field"><label>Message <span class="req">*</span></label><textarea id="hsMessage" placeholder="Describe your query or issue in detail..." style="min-height:100px;"></textarea></div>
+        <div class="modal-btns">
+          <button class="btn btn-ghost" onclick="closeHelpSupport()">Cancel</button>
+          <button class="btn btn-primary" id="hsSubmitBtn" onclick="submitPublicTicket()">📨 Submit Query</button>
+        </div>
+      </div>
+      <div id="hsSubmitSuccess" style="display:none;">
+        <div class="alert-banner" style="background:var(--green-lt);color:var(--green);border-radius:10px;padding:14px;font-size:.85rem;margin-bottom:10px;">✅ Query submitted! Save your ticket number below — the admin will respond soon.</div>
+        <div style="background:var(--bg);border:2px dashed var(--brand);border-radius:10px;padding:16px;text-align:center;margin-bottom:14px;">
+          <div style="font-size:.72rem;color:var(--ink4);margin-bottom:4px;">Your Ticket Number</div>
+          <div id="hsTicketNo" style="font-family:monospace;font-size:1.3rem;font-weight:800;color:var(--brand);letter-spacing:.05em;"></div>
+        </div>
+        <div class="modal-btns">
+          <button class="btn btn-ghost" onclick="closeHelpSupport()">Done</button>
+          <button class="btn btn-primary" onclick="hsGoTrackJustSubmitted()">Track Now →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TRACK -->
+    <div id="hsPanelTrack" style="display:none;">
+      <h3>Track Your Query</h3>
+      <p class="modal-sub">Enter your ticket number to see its status and any admin reply.</p>
+      <div class="field"><label>Ticket Number <span class="req">*</span></label>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="hsTrackInput" placeholder="e.g. PH-8F3K2QZ1" style="font-family:monospace;font-weight:600;" onkeydown="if(event.key==='Enter')trackPublicTicket()">
+          <button class="btn btn-primary" onclick="trackPublicTicket()">Track</button>
+        </div>
+      </div>
+      <div id="hsTrackResult"></div>
+      <div class="modal-btns">
+        <button class="btn btn-ghost" onclick="closeHelpSupport()">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Firebase (compat SDK — works with classic <script>, no bundler needed) -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+
+<script>
+/* ============ FIREBASE SETUP ============
+   1. Go to https://console.firebase.google.com -> Add project
+   2. Project settings -> Add a Web App -> copy the config object -> paste it below
+   3. Build > Authentication -> Get started -> Sign-in method -> enable "Email/Password"
+   4. Build > Firestore Database -> Create database (any region, start in production mode)
+   5. Firestore -> Rules -> paste the contents of firestore.rules (provided alongside this file) -> Publish
+   6. Open this HTML file. Register your own account first (any role), then in the Firebase
+      Console -> Firestore -> users -> open your user document -> manually set role:"admin"
+      and status:"approved". That's your one-time admin bootstrap step. Every other rule
+      already correctly requires admin approval, so this manual step is done on purpose —
+      it's what keeps random visitors from being able to grant themselves admin.
+*/
+const firebaseConfig = {
+  apiKey: "AIzaSyCt6s5nMB4bS6_tKYOu8U5ERH7-Y9yP9qU",
+  authDomain: "prephub-f9dbd.firebaseapp.com",
+  projectId: "prephub-f9dbd",
+  storageBucket: "prephub-f9dbd.firebasestorage.app",
+  messagingSenderId: "63924321576",
+  appId: "1:63924321576:web:b1840e34337b3b8771641d"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const dbFS = firebase.firestore();
+
+/* ============ STORAGE / STATE ============
+   DB is now a live local mirror of Firestore, kept in sync by onSnapshot listeners.
+   All the render functions below still read DB.users / DB.tests / etc. synchronously
+   exactly like before — only the write path (create/update/delete) goes through Firestore.
+*/
+let DB={users:[],schools:[],classes:[],tests:[],attempts:[],tickets:[]};
+let currentProfile=null;
+let uiState={sidebarCollapsed:false, page:'dashboard', pageParams:{}};
+let privateListeners=[], publicListeners=[];
+
+function uid(pre){return (pre||'id')+'_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4);}
+function nowISO(){return new Date().toISOString();}
+function fmtDate(iso){if(!iso)return '—';const d=new Date(iso);return d.toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'})+' '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});}
+
+function friendlyError(e){
+  const map={
+    'auth/email-already-in-use':'That email is already registered.',
+    'auth/invalid-email':'That email address looks invalid.',
+    'auth/weak-password':'Password is too weak (use at least 6 characters).',
+    'auth/wrong-password':'Invalid email or password.',
+    'auth/user-not-found':'Invalid email or password.',
+    'auth/invalid-credential':'Invalid email or password.',
+    'auth/requires-recent-login':'Please log out and log back in, then try again.',
+    'auth/network-request-failed':'Network error — check your connection and try again.',
+    'permission-denied':'You do not have permission to do that.'
+  };
+  return map[e.code] || e.message || 'Something went wrong.';
+}
+
+// Optimistic local-cache helpers so the UI updates instantly after a write succeeds,
+// without waiting for the round-trip through the onSnapshot listener.
+function localUpsert(coll,id,data){
+  const arr=DB[coll]; const idx=arr.findIndex(x=>x.id===id);
+  const obj={id,...data};
+  if(idx>-1) arr[idx]=obj; else arr.push(obj);
+}
+function localUpdate(coll,id,patch){
+  const arr=DB[coll]; const idx=arr.findIndex(x=>x.id===id);
+  if(idx>-1) Object.assign(arr[idx],patch);
+}
+function localRemove(coll,id){ DB[coll]=DB[coll].filter(x=>x.id!==id); }
+
+/* ---- Public data needed before login (schools/classes for the registration form) ---- */
+function attachPublicListeners(){
+  publicListeners.push(dbFS.collection('schools').onSnapshot(snap=>{
+    DB.schools=snap.docs.map(d=>({id:d.id,...d.data()}));
+    populateRegSelects();
+    if(currentProfile) refreshUI();
+  }, e=>toast('Could not load schools: '+friendlyError(e),'error')));
+  publicListeners.push(dbFS.collection('classes').onSnapshot(snap=>{
+    DB.classes=snap.docs.map(d=>({id:d.id,...d.data()}));
+    populateRegSelects();
+    if(currentProfile) refreshUI();
+  }, e=>toast('Could not load classes: '+friendlyError(e),'error')));
+}
+
+/* ---- Private data, only after a successful approved login ---- */
+function attachPrivateListeners(){
+  detachPrivateListeners();
+  privateListeners.push(dbFS.collection('users').onSnapshot(snap=>{
+    DB.users=snap.docs.map(d=>({id:d.id,...d.data()}));
+    // if this account gets suspended/rejected/deleted mid-session, sign them out
+    if(currentProfile && !DB.users.some(u=>u.id===currentProfile.id && u.status==='approved')){
+      toast('Your account access has changed. Please log in again.','warn');
+      doLogout();
+      return;
+    }
+    refreshUI();
+  }, e=>toast('Sync error (users): '+friendlyError(e),'error')));
+  privateListeners.push(dbFS.collection('tests').onSnapshot(snap=>{
+    DB.tests=snap.docs.map(d=>({id:d.id,...d.data()}));
+    refreshUI();
+  }, e=>toast('Sync error (tests): '+friendlyError(e),'error')));
+  privateListeners.push(dbFS.collection('attempts').onSnapshot(snap=>{
+    DB.attempts=snap.docs.map(d=>({id:d.id,...d.data()}));
+    refreshUI();
+  }, e=>toast('Sync error (attempts): '+friendlyError(e),'error')));
+  privateListeners.push(dbFS.collection('tickets').onSnapshot(snap=>{
+    DB.tickets=snap.docs.map(d=>({id:d.id,...d.data()}));
+    refreshUI();
+  }, e=>toast('Sync error (tickets): '+friendlyError(e),'error')));
+}
+function detachPrivateListeners(){ privateListeners.forEach(u=>u()); privateListeners=[]; }
+
+// Re-renders the nav (badges) and, when it's safe to do so, the current page.
+// Pages with in-progress form input (creating/editing a test, mid-attempt) are left
+// alone so a background sync never wipes out what the user is typing.
+function refreshUI(){
+  if(!currentProfile) return;
+  buildNav();
+  const skipAutoRerender=['createtest','edittest','testrunner'];
+  if(!skipAutoRerender.includes(uiState.page)) render();
+}
+
+function currentUser(){
+  if(!currentProfile) return null;
+  return DB.users.find(u=>u.id===currentProfile.id) || currentProfile;
+}
+
+/* ---- Auth state is the single source of truth for whether we're "logged in" ---- */
+// While doRegister() is in the middle of creating the auth account and then
+// writing its Firestore profile, Firebase fires onAuthStateChanged immediately
+// after the account is created — before that profile document exists yet. Left
+// unguarded, this listener would see "no profile", show "Account not found",
+// and sign the brand-new user straight back out mid-registration. This flag
+// tells the listener to sit out that narrow window; doRegister() drives the
+// UI itself once its own write finishes (see checkUserProfileAndEnter below).
+let registrationInFlight=false;
+
+async function checkUserProfileAndEnter(user){
+  try{
+    const snap=await dbFS.collection('users').doc(user.uid).get();
+    if(!snap.exists){
+      toast('Account not found. Contact admin.','error');
+      await auth.signOut();
+      return;
+    }
+    const profile={id:snap.id,...snap.data()};
+    if(profile.status==='pending'){
+      toast('Your account is pending admin approval','warn');
+      await auth.signOut();
+      return;
+    }
+    if(profile.status==='rejected'){
+      toast('Your registration was rejected. Contact admin.','error');
+      await auth.signOut();
+      return;
+    }
+    currentProfile=profile;
+    attachPrivateListeners();
+    enterApp();
+  }catch(e){
+    toast('Failed to load your profile: '+friendlyError(e),'error');
+    await auth.signOut();
+  }
+}
+
+auth.onAuthStateChanged(async (user)=>{
+  if(!user){
+    currentProfile=null;
+    detachPrivateListeners();
+    DB.users=[];DB.tests=[];DB.attempts=[];DB.tickets=[];
+    document.getElementById('shell').classList.remove('show');
+    document.getElementById('authScreen').style.display='flex';
+    return;
+  }
+  if(registrationInFlight) return; // doRegister() will call checkUserProfileAndEnter itself when ready
+  await checkUserProfileAndEnter(user);
+});
+
+/* ============ TOAST ============ */
+function toast(msg,type){
+  type=type||'info';
+  const el=document.createElement('div');
+  el.className='toast-msg '+type;
+  const icons={success:'✅',error:'⛔',info:'ℹ️',warn:'⚠️'};
+  el.innerHTML='<span>'+(icons[type]||'')+'</span><span>'+msg+'</span>';
+  document.getElementById('toast').appendChild(el);
+  setTimeout(()=>el.remove(),3000);
+}
+
+/* ============ CONFIRM MODAL ============ */
+function openConfirm(title,sub,onYes,dangerLabel){
+  document.getElementById('confirmTitle').textContent=title;
+  document.getElementById('confirmSub').textContent=sub||'';
+  const btn=document.getElementById('confirmActionBtn');
+  btn.textContent=dangerLabel||'Confirm';
+  btn.onclick=function(){onYes();closeConfirm();};
+  document.getElementById('confirmOverlay').classList.remove('hidden');
+}
+function closeConfirm(){document.getElementById('confirmOverlay').classList.add('hidden');}
+
+/* ============ DARK MODE ============ */
+function toggleDark(){
+  document.body.classList.toggle('dark');
+  localStorage.setItem('prephub_dark', document.body.classList.contains('dark')?'1':'0');
+}
+function initDark(){ if(localStorage.getItem('prephub_dark')==='1') document.body.classList.add('dark'); }
+
+/* ============ SIDEBAR ============ */
+function toggleSidebar(){
+  uiState.sidebarCollapsed=!uiState.sidebarCollapsed;
+  document.getElementById('sidebar').classList.toggle('collapsed',uiState.sidebarCollapsed);
+}
+
+/* ============ AUTH SCREEN LOGIC ============ */
+let regRole='teacher';
+function switchAuthTab(t){
+  document.getElementById('tabLoginBtn').classList.toggle('active',t==='login');
+  document.getElementById('tabRegisterBtn').classList.toggle('active',t==='register');
+  document.getElementById('loginPane').style.display=t==='login'?'block':'none';
+  document.getElementById('registerPane').style.display=t==='register'?'block':'none';
+  if(t==='register') populateRegSelects();
+}
+function pickRole(r){
+  regRole=r;
+  document.getElementById('roleOptTeacher').classList.toggle('active',r==='teacher');
+  document.getElementById('roleOptStudent').classList.toggle('active',r==='student');
+  document.getElementById('regSubjectField').style.display=r==='teacher'?'block':'none';
+}
+function togglePw(id){
+  const el=document.getElementById(id);
+  el.type=el.type==='password'?'text':'password';
+}
+function populateRegSelects(){
+  const s=document.getElementById('regSchool'), c=document.getElementById('regClass');
+  const noSchool='<option value="">Not assigned yet (admin can add later)</option>';
+  const noClass='<option value="">Not assigned yet (admin can add later)</option>';
+  s.innerHTML=noSchool+DB.schools.map(x=>'<option value="'+x.id+'">'+esc(x.name)+'</option>').join('');
+  c.innerHTML=noClass+DB.classes.map(x=>'<option value="'+x.id+'">'+esc(x.name)+'</option>').join('');
+}
+function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+
+async function doRegister(){
+  const name=document.getElementById('regName').value.trim();
+  const email=document.getElementById('regEmail').value.trim().toLowerCase();
+  const pw=document.getElementById('regPassword').value;
+  const phone=document.getElementById('regPhone').value.trim();
+  const school=document.getElementById('regSchool').value;
+  const cls=document.getElementById('regClass').value;
+  const subject=document.getElementById('regSubject').value.trim();
+  if(!name||!email||!pw){toast('Please fill all required fields','error');return;}
+  if(pw.length<6){toast('Password must be at least 6 characters','error');return;}
+  // School/Class are optional now — an admin can be assigned to one later, and
+  // this also avoids the old chicken-and-egg bug where the very first person
+  // (who needs to register in order to become admin) couldn't register at all
+  // because no school/class existed yet for them to pick from.
+  const btn=document.getElementById('registerBtn');
+  if(btn){btn.disabled=true; btn.textContent='Creating account...';}
+  try{
+    registrationInFlight=true; // must be set before the await below, not after — awaiting yields
+    // control to the browser, and Firebase's own auth listener can otherwise fire and race ahead
+    // of this line, signing the brand-new account back out before we get a chance to set the flag.
+    const cred=await auth.createUserWithEmailAndPassword(email,pw);
+    const baseProfile={name,email,school,cls,phone,subject:regRole==='teacher'?subject:'',createdAt:nowISO()};
+    const userRef=dbFS.collection('users').doc(cred.user.uid);
+    const bootstrapRef=dbFS.collection('system').doc('bootstrap');
+    let becameAdmin=false;
+    try{
+      // Bootstrap: if no admin has ever been created on this project yet, the very
+      // first person to register is automatically made an approved admin — solving
+      // the manual-Firestore-edit chicken-and-egg problem. This is done inside a
+      // transaction guarded by security rules so only one registrant can ever win
+      // this race, and every registrant after that follows the normal pending flow.
+      await dbFS.runTransaction(async(tx)=>{
+        const bs=await tx.get(bootstrapRef);
+        if(!bs.exists || bs.data().adminCreated!==true){
+          becameAdmin=true;
+          tx.set(userRef,{...baseProfile,role:'admin',status:'approved'});
+          tx.set(bootstrapRef,{adminCreated:true,adminUid:cred.user.uid,adminEmail:email,at:nowISO()});
+        }else{
+          tx.set(userRef,{...baseProfile,role:regRole,status:'pending'});
+        }
+      });
+    }catch(profileErr){
+      // The auth account was created but the profile write got rejected (e.g. rules
+      // not published yet). Don't leave an orphaned login behind — undo the auth
+      // account so the person can simply try registering again with the same email.
+      await cred.user.delete().catch(()=>{});
+      throw profileErr;
+    }finally{
+      registrationInFlight=false;
+    }
+    if(becameAdmin){
+      toast('You are the first account here — you have been made admin automatically. Logging you in…','success');
+      await checkUserProfileAndEnter(cred.user); // the listener sat this out, so drive login ourselves
+    }else{
+      await auth.signOut(); // registering doesn't log you in — you need admin approval first
+      toast('Registered! Please wait for admin approval.','success');
+      switchAuthTab('login');
+      document.getElementById('loginEmail').value=email;
+    }
+    document.getElementById('regName').value='';document.getElementById('regEmail').value='';document.getElementById('regPassword').value='';document.getElementById('regPhone').value='';document.getElementById('regSubject').value='';
+  }catch(e){
+    registrationInFlight=false;
+    toast(friendlyError(e),'error');
+  }finally{
+    if(btn){btn.disabled=false; btn.textContent='Create Account';}
+  }
+}
+
+async function doLogin(){
+  const email=document.getElementById('loginEmail').value.trim().toLowerCase();
+  const pw=document.getElementById('loginPassword').value;
+  if(!email||!pw){toast('Enter your email and password','error');return;}
+  const btn=document.getElementById('loginBtn');
+  if(btn){btn.disabled=true; btn.textContent='Logging in...';}
+  try{
+    await auth.signInWithEmailAndPassword(email,pw);
+    // onAuthStateChanged picks it up from here: fetches the profile, checks
+    // status, and either calls enterApp() or signs back out with a toast.
+  }catch(e){
+    toast(friendlyError(e),'error');
+  }finally{
+    if(btn){btn.disabled=false; btn.textContent='Log In';}
+  }
+}
+function doLogout(){
+  auth.signOut();
+  document.getElementById('loginEmail').value='';document.getElementById('loginPassword').value='';
+}
+
+/* ============ APP ENTRY ============ */
+function enterApp(){
+  const u=currentUser();
+  document.getElementById('authScreen').style.display='none';
+  document.getElementById('shell').classList.add('show');
+  document.getElementById('sbAvatar').textContent=u.name.charAt(0).toUpperCase();
+  document.getElementById('sbName').textContent=u.name;
+  document.getElementById('sbRole').textContent=u.role.charAt(0).toUpperCase()+u.role.slice(1);
+  document.getElementById('tbAvatarBtn').textContent=u.name.charAt(0).toUpperCase();
+  buildNav();
+  goPage(u.role==='admin'?'dashboard':'dashboard');
+}
+function buildNav(){
+  const u=currentUser();
+  const pendingCount=DB.users.filter(x=>x.status==='pending').length;
+  let items=[];
+  if(u.role==='admin'){
+    items=[
+      {sec:'Overview'},
+      {p:'dashboard',icon:'📊',label:'Dashboard'},
+      {sec:'Administration'},
+      {p:'approvals',icon:'✅',label:'Pending Approvals',badge:pendingCount||null},
+      {p:'users',icon:'👥',label:'Manage Users'},
+      {p:'registry',icon:'🏫',label:'Schools & Classes'},
+      {sec:'Tests'},
+      {p:'alltests',icon:'📝',label:'All Tests'},
+      {p:'analytics',icon:'📈',label:'Analytics'},
+      {sec:'Support'},
+      {p:'supporttickets',icon:'🆘',label:'Support Tickets',badge:openTicketCount()||null},
+      {sec:''},
+      {p:'profile',icon:'⚙️',label:'My Profile'}
+    ];
+  } else if(u.role==='teacher'){
+    items=[
+      {sec:'Overview'},
+      {p:'dashboard',icon:'📊',label:'Dashboard'},
+      {sec:'Tests & DPP'},
+      {p:'createtest',icon:'➕',label:'Create Test / DPP'},
+      {p:'mytests',icon:'📝',label:'My Tests'},
+      {p:'analytics',icon:'📈',label:'Analytics'},
+      {sec:'Support'},
+      {p:'support',icon:'🆘',label:'Help & Support'},
+      {sec:''},
+      {p:'profile',icon:'⚙️',label:'My Profile'}
+    ];
+  } else {
+    items=[
+      {sec:'Overview'},
+      {p:'dashboard',icon:'📊',label:'Dashboard'},
+      {sec:'Tests'},
+      {p:'available',icon:'📥',label:'Available Tests'},
+      {p:'results',icon:'🏆',label:'My Results'},
+      {p:'analytics',icon:'📈',label:'My Analytics'},
+      {sec:'Support'},
+      {p:'support',icon:'🆘',label:'Help & Support'},
+      {sec:''},
+      {p:'profile',icon:'⚙️',label:'My Profile'}
+    ];
+  }
+  const nav=document.getElementById('navArea');
+  nav.innerHTML=items.map(it=>{
+    if(it.sec!==undefined) return it.sec? '<div class="sb-section">'+it.sec+'</div>':'<div class="sb-divider"></div>';
+    return '<div class="sb-item" data-page="'+it.p+'" onclick="goPage(\''+it.p+'\')"><div class="sb-icon">'+it.icon+'</div><div class="sb-label">'+it.label+'</div>'+(it.badge?'<div class="sb-badge">'+it.badge+'</div>':'')+'</div>';
+  }).join('');
+}
+function markActiveNav(page){
+  document.querySelectorAll('.sb-item').forEach(el=>el.classList.toggle('active', el.dataset.page===page));
+}
+
+/* ============ ROUTER ============ */
+function goPage(page,params){
+  uiState.page=page; uiState.pageParams=params||{};
+  markActiveNav(page);
+  const titles={dashboard:'Dashboard',approvals:'Pending Approvals',users:'Manage Users',registry:'Schools & Classes',
+    alltests:'All Tests',analytics:'Analytics',createtest:'Create Test / DPP',mytests:'My Tests',available:'Available Tests',
+    results:'My Results',profile:'My Profile',testrunner:'Attempt Test',testreview:'Test Review',testanalytics:'Test Analytics',edittest:'Edit Test',
+    support:'Help & Support',supporttickets:'Support Tickets'};
+  document.getElementById('pageTitle').textContent=titles[page]||'PrepHub';
+  render();
+}
+function render(){
+  const u=currentUser(); if(!u) return;
+  const c=document.getElementById('content');
+  const fns={
+    dashboard: u.role==='admin'?renderAdminDashboard: u.role==='teacher'?renderTeacherDashboard:renderStudentDashboard,
+    approvals: renderApprovals,
+    users: renderUsers,
+    registry: renderRegistry,
+    alltests: renderAllTests,
+    analytics: u.role==='student'?renderStudentAnalytics: u.role==='teacher'?renderTeacherAnalytics:renderAdminAnalytics,
+    createtest: renderCreateTest,
+    mytests: renderMyTests,
+    available: renderAvailableTests,
+    results: renderMyResults,
+    profile: renderProfile,
+    testrunner: renderTestRunner,
+    testreview: renderTestReview,
+    testanalytics: renderTestAnalytics,
+    edittest: renderCreateTest,
+    support: renderSupport,
+    supporttickets: renderSupportTickets
+  };
+  c.innerHTML='';
+  (fns[uiState.page]||renderNotFound)(c);
+}
+function renderNotFound(c){c.innerHTML='<div class="empty"><div class="e-icon">🤷</div><div class="e-title">Page not found</div></div>';}
+
+/* ============ HELPERS: DATA ============ */
+function schoolName(id){const s=DB.schools.find(x=>x.id===id);return s?s.name:'—';}
+function className(id){const c=DB.classes.find(x=>x.id===id);return c?c.name:'—';}
+function userById(id){return DB.users.find(x=>x.id===id);}
+function testById(id){return DB.tests.find(x=>x.id===id);}
+function testAttempts(testId){return DB.attempts.filter(a=>a.testId===testId);}
+function userAttempts(userId){return DB.attempts.filter(a=>a.userId===userId);}
+function maxScoreOf(test){return test.questions.reduce((s,q)=>s+Number(q.marks||1),0);}
+
+/* ============ ADMIN: DASHBOARD ============ */
+function renderAdminDashboard(c){
+  const totalUsers=DB.users.filter(u=>u.role!=='admin').length;
+  const pending=DB.users.filter(u=>u.status==='pending').length;
+  const teachers=DB.users.filter(u=>u.role==='teacher'&&u.status==='approved').length;
+  const students=DB.users.filter(u=>u.role==='student'&&u.status==='approved').length;
+  const totalTests=DB.tests.length;
+  const totalAttempts=DB.attempts.length;
+  c.innerHTML=`
+  <div class="page-header"><h2>Welcome back, Admin 👋</h2><p>Here's what's happening across PrepHub right now.</p></div>
+  <div class="g4" style="margin-bottom:20px;">
+    ${statCard('👥','Total Users',totalUsers,'var(--blue)','var(--blue-lt)')}
+    ${statCard('⏳','Pending Approvals',pending,'var(--gold)','var(--gold-lt)')}
+    ${statCard('🧑‍🏫','Active Teachers',teachers,'var(--purple)','var(--purple-lt)')}
+    ${statCard('🎓','Active Students',students,'var(--teal)','var(--teal-lt)')}
+  </div>
+  <div class="g2">
+    <div class="card">
+      <div class="card-header"><h3>Test Activity</h3></div>
+      <div class="g2">
+        ${miniStat('Total Tests / DPPs',totalTests)}
+        ${miniStat('Total Attempts',totalAttempts)}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Recent Registrations</h3></div>
+      ${recentUsersList()}
+    </div>
+  </div>`;
+}
+function statCard(icon,label,num,color,bg){
+  return '<div class="stat-card"><div class="sc-top"><div class="sc-icon" style="background:'+bg+';color:'+color+'">'+icon+'</div></div><div class="sc-num">'+num+'</div><div class="sc-label">'+label+'</div><div class="sc-bar" style="background:'+color+'"></div></div>';
+}
+function miniStat(label,num){
+  return '<div style="text-align:center;padding:14px;background:var(--bg);border-radius:10px;"><div style="font-family:\'Crimson Pro\',serif;font-size:1.8rem;font-weight:700;">'+num+'</div><div style="font-size:.75rem;color:var(--ink3);margin-top:4px;">'+label+'</div></div>';
+}
+function recentUsersList(){
+  const recent=[...DB.users].filter(u=>u.role!=='admin').sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,5);
+  if(!recent.length) return '<div class="empty"><div class="e-icon">📭</div><div class="e-title">No registrations yet</div></div>';
+  return recent.map(u=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);">
+    <div><strong style="font-size:.85rem;">${esc(u.name)}</strong><div style="font-size:.72rem;color:var(--ink4);">${esc(u.email)} · ${u.role}</div></div>
+    <span class="badge b-${u.status}">${u.status}</span></div>`).join('');
+}
+
+/* ============ ADMIN: APPROVALS ============ */
+function renderApprovals(c){
+  const pending=DB.users.filter(u=>u.status==='pending');
+  c.innerHTML=`<div class="page-header"><h2>Pending Approvals</h2><p>Review and approve new teacher &amp; student registrations.</p></div>
+  <div id="pendingList"></div>`;
+  const list=document.getElementById('pendingList');
+  if(!pending.length){list.innerHTML='<div class="empty"><div class="e-icon">🎉</div><div class="e-title">All caught up</div><div class="e-sub">No pending registrations right now.</div></div>';return;}
+  list.innerHTML=pending.map(u=>`
+    <div class="item-card">
+      <div class="ic-top">
+        <div><div class="ic-title">${esc(u.name)} <span class="badge b-${u.role==='teacher'?'teacher':'student'}">${u.role}</span></div>
+        <div class="ic-meta">
+          <span>✉️ ${esc(u.email)}</span>
+          <span>🏫 ${esc(schoolName(u.school))}</span>
+          <span>🏷️ ${esc(className(u.cls))}</span>
+          ${u.phone?'<span>📞 '+esc(u.phone)+'</span>':''}
+          ${u.subject?'<span>📖 '+esc(u.subject)+'</span>':''}
+          <span>🕒 ${fmtDate(u.createdAt)}</span>
+        </div></div>
+      </div>
+      <div class="ic-actions">
+        <button class="btn btn-success btn-sm" onclick="approveUser('${u.id}')">✅ Approve</button>
+        <button class="btn btn-danger btn-sm" onclick="rejectUser('${u.id}')">✖ Reject</button>
+      </div>
+    </div>`).join('');
+}
+async function approveUser(id){
+  const u=userById(id); if(!u) return;
+  try{
+    await dbFS.collection('users').doc(id).update({status:'approved'});
+    localUpdate('users',id,{status:'approved'});
+    toast(u.name+' approved','success'); refreshUI();
+  }catch(e){ toast('Failed to approve: '+friendlyError(e),'error'); }
+}
+function rejectUser(id){
+  const u=userById(id); if(!u) return;
+  openConfirm('Reject this user?','This will mark the registration as rejected.',async()=>{
+    try{
+      await dbFS.collection('users').doc(id).update({status:'rejected'});
+      localUpdate('users',id,{status:'rejected'});
+      toast(u.name+' rejected','warn'); refreshUI();
+    }catch(e){ toast('Failed to reject: '+friendlyError(e),'error'); }
+  },'Reject');
+}
+
+/* ============ ADMIN: MANAGE USERS ============ */
+function renderUsers(c){
+  const users=DB.users.filter(u=>u.role!=='admin');
+  c.innerHTML=`<div class="page-header"><h2>Manage Users</h2><p>All teachers and students in the system.</p></div>
+  <div class="page-toolbar">
+    <div class="search-box">🔍<input type="text" id="userSearch" placeholder="Search by name or email..." oninput="renderUsersTable()"></div>
+    <button class="filter-btn active" data-f="all" onclick="setUserFilter('all')">All</button>
+    <button class="filter-btn" data-f="teacher" onclick="setUserFilter('teacher')">Teachers</button>
+    <button class="filter-btn" data-f="student" onclick="setUserFilter('student')">Students</button>
+  </div>
+  <div class="card"><div id="usersTableWrap"></div></div>`;
+  window._userFilter='all';
+  renderUsersTable();
+}
+function setUserFilter(f){
+  window._userFilter=f;
+  document.querySelectorAll('.filter-btn').forEach(b=>b.classList.toggle('active',b.dataset.f===f));
+  renderUsersTable();
+}
+function renderUsersTable(){
+  const q=(document.getElementById('userSearch')?.value||'').toLowerCase();
+  const f=window._userFilter||'all';
+  let users=DB.users.filter(u=>u.role!=='admin');
+  if(f!=='all') users=users.filter(u=>u.role===f);
+  if(q) users=users.filter(u=>u.name.toLowerCase().includes(q)||u.email.toLowerCase().includes(q));
+  const wrap=document.getElementById('usersTableWrap');
+  if(!users.length){wrap.innerHTML='<div class="empty"><div class="e-icon">🔍</div><div class="e-title">No users found</div></div>';return;}
+  wrap.innerHTML=`<table class="datatable"><thead><tr><th>Name</th><th>Role</th><th>School / Class</th><th>Status</th><th>Joined</th><th></th></tr></thead><tbody>
+  ${users.map(u=>`<tr>
+    <td><strong>${esc(u.name)}</strong><br><span style="color:var(--ink4);font-size:.75rem;">${esc(u.email)}</span></td>
+    <td><span class="badge b-${u.role}">${u.role}</span></td>
+    <td>${esc(schoolName(u.school))}<br><span style="color:var(--ink4);font-size:.75rem;">${esc(className(u.cls))}</span></td>
+    <td><span class="badge b-${u.status}">${u.status}</span></td>
+    <td>${fmtDate(u.createdAt)}</td>
+    <td>
+      ${u.status==='approved'?'<button class="btn btn-gold btn-xs" onclick="suspendUser(\''+u.id+'\')">Suspend</button>':'<button class="btn btn-success btn-xs" onclick="approveUser(\''+u.id+'\')">Approve</button>'}
+      <button class="btn btn-danger btn-xs" onclick="deleteUser('${u.id}')">Delete</button>
+    </td>
+  </tr>`).join('')}
+  </tbody></table>`;
+}
+async function suspendUser(id){
+  try{
+    await dbFS.collection('users').doc(id).update({status:'rejected'});
+    localUpdate('users',id,{status:'rejected'});
+    toast('User suspended','warn'); refreshUI();
+  }catch(e){ toast('Failed: '+friendlyError(e),'error'); }
+}
+function deleteUser(id){
+  openConfirm('Delete this user?','This permanently removes their profile and submissions and cannot be undone. Note: their login (Firebase Auth) account itself must be removed separately from the Firebase console — deleting an auth account requires admin-level server access this app does not have.',async()=>{
+    try{
+      const batch=dbFS.batch();
+      batch.delete(dbFS.collection('users').doc(id));
+      const attSnap=await dbFS.collection('attempts').where('userId','==',id).get();
+      attSnap.forEach(d=>batch.delete(d.ref));
+      await batch.commit();
+      localRemove('users',id);
+      DB.attempts=DB.attempts.filter(a=>a.userId!==id);
+      toast('User deleted','success'); refreshUI();
+    }catch(e){ toast('Failed to delete: '+friendlyError(e),'error'); }
+  },'Delete');
+}
+
+/* ============ ADMIN: SCHOOLS & CLASSES (registration setup) ============ */
+function renderRegistry(c){
+  c.innerHTML=`<div class="page-header"><h2>Schools &amp; Classes</h2><p>Manage the school and class list used during registration and test targeting.</p></div>
+  <div class="g2">
+    <div class="card">
+      <div class="card-header"><h3>🏫 Schools</h3></div>
+      <div style="display:flex;gap:8px;margin-bottom:14px;">
+        <input type="text" id="newSchoolName" placeholder="New school name" style="flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);">
+        <button class="btn btn-primary" onclick="addSchool()">Add</button>
+      </div>
+      <div id="schoolList"></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>🏷️ Classes</h3></div>
+      <div style="display:flex;gap:8px;margin-bottom:14px;">
+        <input type="text" id="newClassName" placeholder="New class name (e.g. Class 10, JEE Batch A)" style="flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);">
+        <button class="btn btn-primary" onclick="addClass()">Add</button>
+      </div>
+      <div id="classList"></div>
+    </div>
+  </div>`;
+  renderSchoolList(); renderClassList();
+}
+function renderSchoolList(){
+  const el=document.getElementById('schoolList');
+  if(!DB.schools.length){el.innerHTML='<div class="empty"><div class="e-icon">🏫</div><div class="e-title">No schools added</div></div>';return;}
+  el.innerHTML=DB.schools.map(s=>{
+    const inUse=DB.users.some(u=>u.school===s.id);
+    return '<div class="tag-chip">🏫 '+esc(s.name)+' <button onclick="removeSchool(\''+s.id+'\','+inUse+')">✕</button></div>';
+  }).join('');
+}
+function renderClassList(){
+  const el=document.getElementById('classList');
+  if(!DB.classes.length){el.innerHTML='<div class="empty"><div class="e-icon">🏷️</div><div class="e-title">No classes added</div></div>';return;}
+  el.innerHTML=DB.classes.map(cl=>{
+    const inUse=DB.users.some(u=>u.cls===cl.id);
+    return '<div class="tag-chip">🏷️ '+esc(cl.name)+' <button onclick="removeClass(\''+cl.id+'\','+inUse+')">✕</button></div>';
+  }).join('');
+}
+async function addSchool(){
+  const inp=document.getElementById('newSchoolName'); const name=inp.value.trim();
+  if(!name){toast('Enter a school name','error');return;}
+  try{
+    const id=uid('sch');
+    await dbFS.collection('schools').doc(id).set({name});
+    localUpsert('schools',id,{name});
+    inp.value=''; renderSchoolList(); toast('School added','success');
+  }catch(e){ toast('Failed: '+friendlyError(e),'error'); }
+}
+function removeSchool(id,inUse){
+  const doIt=async()=>{
+    try{
+      await dbFS.collection('schools').doc(id).delete();
+      localRemove('schools',id);
+      renderSchoolList(); toast('School removed','success');
+    }catch(e){ toast('Failed: '+friendlyError(e),'error'); }
+  };
+  if(inUse){openConfirm('School is in use','Some users are linked to this school. Remove anyway?',doIt,'Remove');}else{doIt();}
+}
+async function addClass(){
+  const inp=document.getElementById('newClassName'); const name=inp.value.trim();
+  if(!name){toast('Enter a class name','error');return;}
+  try{
+    const id=uid('cls');
+    await dbFS.collection('classes').doc(id).set({name});
+    localUpsert('classes',id,{name});
+    inp.value=''; renderClassList(); toast('Class added','success');
+  }catch(e){ toast('Failed: '+friendlyError(e),'error'); }
+}
+function removeClass(id,inUse){
+  const doIt=async()=>{
+    try{
+      await dbFS.collection('classes').doc(id).delete();
+      localRemove('classes',id);
+      renderClassList(); toast('Class removed','success');
+    }catch(e){ toast('Failed: '+friendlyError(e),'error'); }
+  };
+  if(inUse){openConfirm('Class is in use','Some users are linked to this class. Remove anyway?',doIt,'Remove');}else{doIt();}
+}
+
+/* ============ ADMIN: ALL TESTS ============ */
+function renderAllTests(c){
+  c.innerHTML=`<div class="page-header"><h2>All Tests &amp; DPPs</h2><p>Every test created across PrepHub.</p></div><div id="allTestsList"></div>`;
+  const wrap=document.getElementById('allTestsList');
+  if(!DB.tests.length){wrap.innerHTML='<div class="empty"><div class="e-icon">📝</div><div class="e-title">No tests created yet</div></div>';return;}
+  wrap.innerHTML=[...DB.tests].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(t=>testCardHTML(t,true)).join('');
+}
+
+/* ============ TEACHER: DASHBOARD ============ */
+function renderTeacherDashboard(c){
+  const u=currentUser();
+  const myTests=DB.tests.filter(t=>t.createdBy===u.id);
+  const myAttempts=DB.attempts.filter(a=>myTests.some(t=>t.id===a.testId));
+  const published=myTests.filter(t=>t.published).length;
+  c.innerHTML=`
+  <div class="page-header"><h2>Welcome, ${esc(u.name)} 👋</h2><p>${esc(u.subject||'Teacher')} · manage your DPPs and test series.</p></div>
+  <div class="g4" style="margin-bottom:20px;">
+    ${statCard('📝','My Tests / DPPs',myTests.length,'var(--blue)','var(--blue-lt)')}
+    ${statCard('🟢','Published',published,'var(--green)','var(--green-lt)')}
+    ${statCard('🧾','Total Submissions',myAttempts.length,'var(--purple)','var(--purple-lt)')}
+    ${statCard('📊','Avg Score %',avgScorePct(myAttempts,myTests)+'%','var(--teal)','var(--teal-lt)')}
+  </div>
+  <div class="card">
+    <div class="card-header"><h3>Recent Tests</h3><button class="btn btn-primary btn-sm" onclick="goPage('createtest')">➕ New Test</button></div>
+    ${myTests.length? [...myTests].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,5).map(t=>testCardHTML(t,false)).join('') : '<div class="empty"><div class="e-icon">📝</div><div class="e-title">No tests yet</div><div class="e-sub">Click "New Test" to create your first DPP or test series.</div></div>'}
+  </div>`;
+}
+function avgScorePct(attempts,tests){
+  if(!attempts.length) return 0;
+  let total=0,cnt=0;
+  attempts.forEach(a=>{const t=tests.find(x=>x.id===a.testId)||testById(a.testId); if(!t)return; const mx=maxScoreOf(t); if(mx>0){total+=(a.score/mx*100);cnt++;}});
+  return cnt? Math.round(total/cnt):0;
+}
+
+/* ============ TEST CARD (shared) ============ */
+function testCardHTML(t,showCreator){
+  const creator=userById(t.createdBy);
+  const attempts=testAttempts(t.id);
+  const u=currentUser();
+  const canManage = u.role==='admin' || (u.role==='teacher' && t.createdBy===u.id);
+  return `<div class="item-card">
+    <div class="ic-top">
+      <div>
+        <div class="ic-title">${esc(t.title)} <span class="badge b-${t.type==='DPP'?'dpp':'series'}">${t.type}</span> <span class="badge b-${t.published?'live':'draft'}">${t.published?'Published':'Draft'}</span></div>
+        <div class="ic-meta">
+          <span>📖 ${esc(t.subject||'General')}</span>
+          <span>❓ ${t.questions.length} Qs</span>
+          <span>🏫 ${t.school==='ALL'?'All Schools':esc(schoolName(t.school))}</span>
+          <span>🏷️ ${t.cls==='ALL'?'All Classes':esc(className(t.cls))}</span>
+          <span>⏱ ${t.duration>0?t.duration+' min':'No limit'}</span>
+          ${showCreator?'<span>🧑‍🏫 '+esc(creator?creator.name:'Unknown')+'</span>':''}
+          <span>🧾 ${attempts.length} submissions</span>
+          <span>🕒 ${fmtDate(t.createdAt)}</span>
+        </div>
+      </div>
+    </div>
+    <div class="ic-actions">
+      <button class="btn btn-teal btn-sm" onclick="goPage('testanalytics',{testId:'${t.id}'})">📈 Analytics</button>
+      ${canManage?'<button class="btn btn-blue btn-sm" onclick="editTest(\''+t.id+'\')">✏️ Edit</button>':''}
+      ${canManage?'<button class="btn '+(t.published?'btn-gold':'btn-success')+' btn-sm" onclick="togglePublish(\''+t.id+'\')">'+(t.published?'⏸ Unpublish':'▶ Publish')+'</button>':''}
+      ${canManage?'<button class="btn btn-danger btn-sm" onclick="deleteTest(\''+t.id+'\')">🗑 Delete</button>':''}
+    </div>
+  </div>`;
+}
+async function togglePublish(id){
+  const t=testById(id); if(!t) return;
+  try{
+    await dbFS.collection('tests').doc(id).update({published:!t.published});
+    localUpdate('tests',id,{published:!t.published});
+    toast(!t.published?'Test published':'Test unpublished','success'); render();
+  }catch(e){ toast('Failed: '+friendlyError(e),'error'); }
+}
+function deleteTest(id){
+  openConfirm('Delete this test?','All submissions for this test will also be removed. This cannot be undone.',async()=>{
+    try{
+      const batch=dbFS.batch();
+      batch.delete(dbFS.collection('tests').doc(id));
+      const attSnap=await dbFS.collection('attempts').where('testId','==',id).get();
+      attSnap.forEach(d=>batch.delete(d.ref));
+      await batch.commit();
+      localRemove('tests',id);
+      DB.attempts=DB.attempts.filter(a=>a.testId!==id);
+      toast('Test deleted','success'); render();
+    }catch(e){ toast('Failed to delete: '+friendlyError(e),'error'); }
+  },'Delete');
+}
+function editTest(id){goPage('edittest',{testId:id});}
+
+/* ============ TEACHER: MY TESTS ============ */
+function renderMyTests(c){
+  const u=currentUser();
+  const mine=DB.tests.filter(t=>t.createdBy===u.id);
+  c.innerHTML=`<div class="page-header"><h2>My Tests &amp; DPPs</h2><p>Everything you've created.</p></div>
+  <div style="margin-bottom:16px;"><button class="btn btn-primary" onclick="goPage('createtest')">➕ Create New Test / DPP</button></div>
+  <div id="myTestsList"></div>`;
+  const wrap=document.getElementById('myTestsList');
+  wrap.innerHTML= mine.length? [...mine].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(t=>testCardHTML(t,false)).join('') : '<div class="empty"><div class="e-icon">📝</div><div class="e-title">No tests yet</div></div>';
+}
+
+/* ============ TEACHER: CREATE / EDIT TEST ============ */
+let draftTest=null;
+function renderCreateTest(c){
+  const editingId=uiState.pageParams.testId;
+  if(editingId){
+    const existing=testById(editingId);
+    draftTest=JSON.parse(JSON.stringify(existing));
+  } else {
+    // Always start a clean form for "Create Test / DPP" — this page is only
+    // re-rendered on an actual navigation (background syncs skip it), so there's
+    // no risk of wiping in-progress edits by resetting here.
+    draftTest={id:uid('test'),title:'',type:'DPP',subject:'',school:'ALL',cls:'ALL',duration:0,questions:[],published:false,createdBy:currentUser().id,createdAt:nowISO()};
+  }
+  const schoolOpts=['<option value="ALL">All Schools</option>'].concat(DB.schools.map(s=>'<option value="'+s.id+'"'+(draftTest.school===s.id?' selected':'')+'>'+esc(s.name)+'</option>')).join('');
+  const classOpts=['<option value="ALL">All Classes</option>'].concat(DB.classes.map(cl=>'<option value="'+cl.id+'"'+(draftTest.cls===cl.id?' selected':'')+'>'+esc(cl.name)+'</option>')).join('');
+  c.innerHTML=`
+  <div class="page-header"><h2>${editingId?'Edit':'Create'} Test / DPP</h2><p>Add single-choice, multiple-choice or integer-answer questions.</p></div>
+  <div class="card" style="margin-bottom:16px;">
+    <div class="g2">
+      <div class="field"><label>Title <span class="req">*</span></label><input type="text" id="tTitle" value="${esc(draftTest.title)}" placeholder="e.g. Daily Practice — Trigonometry"></div>
+      <div class="field"><label>Type</label><select id="tType">
+        <option value="DPP" ${draftTest.type==='DPP'?'selected':''}>DPP (Daily Practice)</option>
+        <option value="Test Series" ${draftTest.type==='Test Series'?'selected':''}>Test Series</option>
+      </select></div>
+    </div>
+    <div class="g3">
+      <div class="field"><label>Subject</label><input type="text" id="tSubject" value="${esc(draftTest.subject)}" placeholder="e.g. Physics"></div>
+      <div class="field"><label>Target School</label><select id="tSchool">${schoolOpts}</select></div>
+      <div class="field"><label>Target Class</label><select id="tClass">${classOpts}</select></div>
+    </div>
+    <div class="field" style="max-width:220px;"><label>Duration (minutes, 0 = no limit)</label><input type="number" id="tDuration" min="0" value="${draftTest.duration||0}"></div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-header"><h3>Questions (${draftTest.questions.length})</h3>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-blue btn-sm" onclick="addQuestion('single')">➕ Single Choice</button>
+        <button class="btn btn-purple btn-sm" onclick="addQuestion('multiple')">➕ Multiple Choice</button>
+        <button class="btn btn-teal btn-sm" onclick="addQuestion('integer')">➕ Integer</button>
+      </div>
+    </div>
+    <div id="questionsWrap"></div>
+  </div>
+
+  <div style="display:flex;gap:10px;">
+    <button class="btn btn-ghost" onclick="draftTest=null;goPage('mytests')">Cancel</button>
+    <button class="btn btn-blue" onclick="saveTestDraft(false)">💾 Save as Draft</button>
+    <button class="btn btn-primary" onclick="saveTestDraft(true)">🚀 Save &amp; Publish</button>
+  </div>`;
+  renderQuestionsWrap();
+}
+function renderQuestionsWrap(){
+  const wrap=document.getElementById('questionsWrap');
+  if(!draftTest.questions.length){wrap.innerHTML='<div class="empty"><div class="e-icon">❓</div><div class="e-title">No questions yet</div><div class="e-sub">Add a question using the buttons above.</div></div>';return;}
+  wrap.innerHTML=draftTest.questions.map((q,i)=>questionEditorHTML(q,i)).join('');
+}
+function questionEditorHTML(q,i){
+  let optsHTML='';
+  if(q.type==='single'||q.type==='multiple'){
+    optsHTML=q.options.map((o,oi)=>{
+      const checked = q.type==='single' ? (q.correct===o.id) : (q.correct.includes(o.id));
+      const inputType = q.type==='single'?'radio':'checkbox';
+      return `<div class="opt-row">
+        <input type="${inputType}" name="correct_${q.id}" ${checked?'checked':''} onclick="setCorrect('${q.id}','${o.id}','${q.type}')">
+        <input type="text" value="${esc(o.text)}" placeholder="Option text" oninput="updateOptionText('${q.id}','${o.id}',this.value)">
+        <button class="btn btn-danger btn-xs" onclick="removeOption('${q.id}','${o.id}')">✕</button>
+      </div>`;
+    }).join('');
+    optsHTML+=`<button class="btn btn-ghost btn-xs" onclick="addOption('${q.id}')">➕ Add option</button>`;
+  } else if(q.type==='integer'){
+    optsHTML=`<div class="field" style="max-width:220px;"><label>Correct Integer Answer</label><input type="number" value="${q.correct!=null?q.correct:''}" oninput="setIntegerAnswer('${q.id}',this.value)"></div>`;
+  }
+  const typeLabel={single:'Single Choice',multiple:'Multiple Choice',integer:'Integer Answer'}[q.type];
+  return `<div class="qcard">
+    <div class="qcard-head">
+      <span class="badge b-${q.type==='integer'?'series':(q.type==='single'?'teacher':'student')}">${typeLabel}</span>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <label style="font-size:.72rem;color:var(--ink3);">Marks</label>
+        <input type="number" min="1" value="${q.marks}" style="width:60px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;" oninput="setMarks('${q.id}',this.value)">
+        <button class="btn btn-danger btn-xs" onclick="removeQuestion('${q.id}')">🗑 Remove</button>
+      </div>
+    </div>
+    <div class="field"><label>Question ${i+1}</label><textarea oninput="setQuestionText('${q.id}',this.value)" placeholder="Enter question text">${esc(q.text)}</textarea></div>
+    ${optsHTML}
+  </div>`;
+}
+function findQ(id){return draftTest.questions.find(q=>q.id===id);}
+function addQuestion(type){
+  const q={id:uid('q'),type,text:'',marks:1};
+  if(type==='single'){q.options=[{id:uid('o'),text:''},{id:uid('o'),text:''}]; q.correct=null;}
+  else if(type==='multiple'){q.options=[{id:uid('o'),text:''},{id:uid('o'),text:''}]; q.correct=[];}
+  else {q.correct=null;}
+  draftTest.questions.push(q);
+  renderQuestionsWrap();
+}
+function removeQuestion(id){draftTest.questions=draftTest.questions.filter(q=>q.id!==id); renderQuestionsWrap();}
+function setQuestionText(id,val){findQ(id).text=val;}
+function setMarks(id,val){findQ(id).marks=Math.max(1,parseInt(val)||1);}
+function addOption(id){const q=findQ(id); q.options.push({id:uid('o'),text:''}); renderQuestionsWrap();}
+function removeOption(qid,oid){
+  const q=findQ(qid); q.options=q.options.filter(o=>o.id!==oid);
+  if(q.type==='single' && q.correct===oid) q.correct=null;
+  if(q.type==='multiple') q.correct=q.correct.filter(x=>x!==oid);
+  renderQuestionsWrap();
+}
+function updateOptionText(qid,oid,val){const q=findQ(qid); const o=q.options.find(x=>x.id===oid); o.text=val;}
+function setCorrect(qid,oid,type){
+  const q=findQ(qid);
+  if(type==='single'){q.correct=oid;}
+  else{ if(q.correct.includes(oid)) q.correct=q.correct.filter(x=>x!==oid); else q.correct.push(oid); }
+}
+function setIntegerAnswer(qid,val){findQ(qid).correct = val===''? null : Number(val);}
+
+function saveTestDraft(publish){
+  draftTest.title=document.getElementById('tTitle').value.trim();
+  draftTest.type=document.getElementById('tType').value;
+  draftTest.subject=document.getElementById('tSubject').value.trim();
+  draftTest.school=document.getElementById('tSchool').value;
+  draftTest.cls=document.getElementById('tClass').value;
+  draftTest.duration=parseInt(document.getElementById('tDuration').value)||0;
+  if(!draftTest.title){toast('Please enter a title','error');return;}
+  if(!draftTest.questions.length){toast('Add at least one question','error');return;}
+  for(const q of draftTest.questions){
+    if(!q.text.trim()){toast('Every question needs question text','error');return;}
+    if(q.type==='single' && !q.correct){toast('Mark a correct option for every single-choice question','error');return;}
+    if(q.type==='multiple' && !q.correct.length){toast('Mark at least one correct option for every multiple-choice question','error');return;}
+    if(q.type==='integer' && (q.correct===null||q.correct===undefined||isNaN(q.correct))){toast('Enter a correct integer answer for every integer question','error');return;}
+    if((q.type==='single'||q.type==='multiple') && q.options.some(o=>!o.text.trim())){toast('Fill in all option text fields','error');return;}
+  }
+  draftTest.published = publish;
+  saveTestDraftToFirestore(publish);
+}
+async function saveTestDraftToFirestore(publish){
+  const toSave={...draftTest};
+  try{
+    await dbFS.collection('tests').doc(toSave.id).set(toSave);
+    localUpsert('tests',toSave.id,toSave);
+    toast(publish?'Test published!':'Draft saved','success');
+    draftTest=null;
+    goPage('mytests');
+  }catch(e){
+    toast('Failed to save: '+friendlyError(e),'error');
+  }
+}
+
+/* ============ STUDENT: DASHBOARD ============ */
+function renderStudentDashboard(c){
+  const u=currentUser();
+  const avail=availableTestsFor(u).filter(t=>!hasAttempted(u.id,t.id));
+  const myAtt=userAttempts(u.id);
+  c.innerHTML=`
+  <div class="page-header"><h2>Welcome, ${esc(u.name)} 👋</h2><p>${esc(schoolName(u.school))} · ${esc(className(u.cls))}</p></div>
+  <div class="g4" style="margin-bottom:20px;">
+    ${statCard('📥','Available Tests',avail.length,'var(--blue)','var(--blue-lt)')}
+    ${statCard('🧾','Tests Attempted',myAtt.length,'var(--purple)','var(--purple-lt)')}
+    ${statCard('📊','Avg Score %',avgScorePctForUser(u.id)+'%','var(--teal)','var(--teal-lt)')}
+    ${statCard('🏆','Best Score %',bestScorePctForUser(u.id)+'%','var(--green)','var(--green-lt)')}
+  </div>
+  <div class="card">
+    <div class="card-header"><h3>Tests Waiting For You</h3><button class="btn btn-primary btn-sm" onclick="goPage('available')">View All</button></div>
+    ${avail.length? avail.slice(0,4).map(t=>studentTestCard(t)).join(''):'<div class="empty"><div class="e-icon">🎉</div><div class="e-title">All caught up!</div><div class="e-sub">No pending tests right now.</div></div>'}
+  </div>`;
+}
+function availableTestsFor(u){
+  return DB.tests.filter(t=> t.published && (t.school==='ALL'||t.school===u.school) && (t.cls==='ALL'||t.cls===u.cls));
+}
+function hasAttempted(userId,testId){return DB.attempts.some(a=>a.userId===userId && a.testId===testId);}
+function avgScorePctForUser(userId){
+  const atts=userAttempts(userId); if(!atts.length)return 0;
+  let total=0,cnt=0;
+  atts.forEach(a=>{const t=testById(a.testId); if(!t)return; const mx=maxScoreOf(t); if(mx>0){total+=a.score/mx*100;cnt++;}});
+  return cnt?Math.round(total/cnt):0;
+}
+function bestScorePctForUser(userId){
+  const atts=userAttempts(userId); if(!atts.length)return 0;
+  let best=0;
+  atts.forEach(a=>{const t=testById(a.testId); if(!t)return; const mx=maxScoreOf(t); if(mx>0) best=Math.max(best,a.score/mx*100);});
+  return Math.round(best);
+}
+function studentTestCard(t){
+  const done=hasAttempted(currentUser().id,t.id);
+  return `<div class="item-card">
+    <div class="ic-top">
+      <div>
+        <div class="ic-title">${esc(t.title)} <span class="badge b-${t.type==='DPP'?'dpp':'series'}">${t.type}</span></div>
+        <div class="ic-meta">
+          <span>📖 ${esc(t.subject||'General')}</span>
+          <span>❓ ${t.questions.length} Qs</span>
+          <span>⏱ ${t.duration>0?t.duration+' min':'No limit'}</span>
+          <span>💯 ${maxScoreOf(t)} marks</span>
+        </div>
+      </div>
+    </div>
+    <div class="ic-actions">
+      ${done?'<button class="btn btn-ghost btn-sm" onclick="viewAttemptReview(\''+t.id+'\')">📄 View Result</button>':'<button class="btn btn-primary btn-sm" onclick="startTest(\''+t.id+'\')">▶ Start Test</button>'}
+    </div>
+  </div>`;
+}
+function viewAttemptReview(testId){
+  const u=currentUser();
+  const att=DB.attempts.find(a=>a.testId===testId && a.userId===u.id);
+  goPage('testreview',{attemptId:att.id});
+}
+
+/* ============ STUDENT: AVAILABLE TESTS ============ */
+function renderAvailableTests(c){
+  const u=currentUser();
+  const avail=availableTestsFor(u);
+  c.innerHTML=`<div class="page-header"><h2>Available Tests</h2><p>Tests and DPPs assigned to ${esc(className(u.cls))}, ${esc(schoolName(u.school))}.</p></div>
+  <div id="availList"></div>`;
+  document.getElementById('availList').innerHTML = avail.length? [...avail].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(t=>studentTestCard(t)).join('') : '<div class="empty"><div class="e-icon">📭</div><div class="e-title">No tests assigned yet</div></div>';
+}
+
+/* ============ STUDENT: MY RESULTS ============ */
+function renderMyResults(c){
+  const u=currentUser();
+  const atts=[...userAttempts(u.id)].sort((a,b)=>new Date(b.submittedAt)-new Date(a.submittedAt));
+  c.innerHTML=`<div class="page-header"><h2>My Results</h2><p>Your submitted test attempts.</p></div><div id="resultsWrap"></div>`;
+  const wrap=document.getElementById('resultsWrap');
+  if(!atts.length){wrap.innerHTML='<div class="empty"><div class="e-icon">🏆</div><div class="e-title">No attempts yet</div></div>';return;}
+  wrap.innerHTML='<div class="card"><table class="datatable"><thead><tr><th>Test</th><th>Subject</th><th>Score</th><th>%</th><th>Submitted</th><th></th></tr></thead><tbody>'+
+  atts.map(a=>{
+    const t=testById(a.testId); if(!t) return '';
+    const mx=maxScoreOf(t); const pct=mx?Math.round(a.score/mx*100):0;
+    return `<tr><td><strong>${esc(t.title)}</strong></td><td>${esc(t.subject||'—')}</td><td>${a.score} / ${mx}</td>
+    <td><span class="badge ${pct>=60?'b-approved':(pct>=40?'b-pending':'b-rejected')}">${pct}%</span></td>
+    <td>${fmtDate(a.submittedAt)}</td>
+    <td><button class="btn btn-ghost btn-xs" onclick="goPage('testreview',{attemptId:'${a.id}'})">View</button></td></tr>`;
+  }).join('')+'</tbody></table></div>';
+}
+
+/* ============ TEST TAKING FLOW ============ */
+let runner=null, runnerTimerInt=null;
+function startTest(testId){
+  const t=testById(testId);
+  runner={test:t,answers:{},current:0,startedAt:Date.now(),secondsLeft:t.duration>0?t.duration*60:null};
+  goPage('testrunner',{testId});
+}
+function renderTestRunner(c){
+  if(!runner){c.innerHTML='<div class="empty"><div class="e-icon">⚠️</div><div class="e-title">No active test</div></div>';return;}
+  const t=runner.test;
+  c.innerHTML=`
+  <div class="card" style="margin-bottom:16px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+      <div><h3 style="font-family:'Crimson Pro',serif;font-size:1.3rem;">${esc(t.title)}</h3><p style="font-size:.78rem;color:var(--ink3);">${esc(t.subject||'General')} · ${t.questions.length} Questions · ${maxScoreOf(t)} marks</p></div>
+      ${runner.secondsLeft!=null?'<div class="timer-box" id="timerBox">--:--</div>':''}
+    </div>
+  </div>
+  <div class="g2" style="align-items:flex-start;">
+    <div class="card" style="grid-column:1/3;" id="qDisplay"></div>
+  </div>
+  <div class="card" style="margin-top:16px;">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;" id="qnavGrid"></div>
+    <div style="display:flex;justify-content:space-between;">
+      <div>
+        <button class="btn btn-ghost btn-sm" onclick="rNav(-1)">← Previous</button>
+        <button class="btn btn-ghost btn-sm" onclick="rNav(1)">Next →</button>
+      </div>
+      <button class="btn btn-primary" onclick="confirmSubmitTest()">✅ Submit Test</button>
+    </div>
+  </div>`;
+  renderCurrentQuestion();
+  renderQNav();
+  if(runner.secondsLeft!=null){
+    clearInterval(runnerTimerInt);
+    updateTimerDisplay();
+    runnerTimerInt=setInterval(()=>{
+      runner.secondsLeft--;
+      updateTimerDisplay();
+      if(runner.secondsLeft<=0){clearInterval(runnerTimerInt); toast('Time up! Auto-submitting...','warn'); submitTest(true);}
+    },1000);
+  }
+}
+function updateTimerDisplay(){
+  const box=document.getElementById('timerBox'); if(!box) return;
+  const m=Math.floor(runner.secondsLeft/60), s=runner.secondsLeft%60;
+  box.textContent=(m<10?'0':'')+m+':'+(s<10?'0':'')+s;
+}
+function renderCurrentQuestion(){
+  const t=runner.test; const q=t.questions[runner.current];
+  const dis=document.getElementById('qDisplay');
+  let inputHTML='';
+  if(q.type==='single'){
+    inputHTML=q.options.map(o=>`<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer;">
+      <input type="radio" name="ans" ${runner.answers[q.id]===o.id?'checked':''} onclick="setAnswer('${q.id}','${o.id}','single')"> <span>${esc(o.text)}</span></label>`).join('');
+  } else if(q.type==='multiple'){
+    inputHTML=q.options.map(o=>{
+      const arr=runner.answers[q.id]||[];
+      return `<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer;">
+      <input type="checkbox" ${arr.includes(o.id)?'checked':''} onclick="setAnswer('${q.id}','${o.id}','multiple')"> <span>${esc(o.text)}</span></label>`;
+    }).join('');
+  } else {
+    inputHTML=`<input type="number" style="max-width:220px;" value="${runner.answers[q.id]!=null?runner.answers[q.id]:''}" oninput="setAnswer('${q.id}',this.value,'integer')" placeholder="Enter your answer">`;
+  }
+  dis.innerHTML=`<div style="font-size:.72rem;color:var(--ink4);margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em;">Question ${runner.current+1} of ${t.questions.length} · ${q.marks} mark${q.marks>1?'s':''}</div>
+  <div style="font-size:1rem;font-weight:600;margin-bottom:16px;line-height:1.5;">${esc(q.text)}</div>
+  ${inputHTML}`;
+}
+function setAnswer(qid,val,type){
+  if(type==='single'){runner.answers[qid]=val;}
+  else if(type==='multiple'){
+    const arr=runner.answers[qid]||[];
+    if(arr.includes(val)) runner.answers[qid]=arr.filter(x=>x!==val); else runner.answers[qid]=[...arr,val];
+  } else { runner.answers[qid]= val===''?null:Number(val); }
+  renderQNav();
+}
+function renderQNav(){
+  const t=runner.test;
+  document.getElementById('qnavGrid').innerHTML=t.questions.map((q,i)=>{
+    const answered = q.type==='multiple' ? (runner.answers[q.id]&&runner.answers[q.id].length) : (runner.answers[q.id]!=null && runner.answers[q.id]!=='');
+    return `<div class="qnav-btn ${answered?'answered':''} ${i===runner.current?'current':''}" onclick="jumpTo(${i})">${i+1}</div>`;
+  }).join('');
+}
+function jumpTo(i){runner.current=i; renderCurrentQuestion(); renderQNav();}
+function rNav(dir){
+  const t=runner.test;
+  runner.current=Math.max(0,Math.min(t.questions.length-1,runner.current+dir));
+  renderCurrentQuestion(); renderQNav();
+}
+function confirmSubmitTest(){
+  const t=runner.test;
+  const answeredCount=t.questions.filter(q=>{
+    const a=runner.answers[q.id];
+    return q.type==='multiple'? (a&&a.length) : (a!=null && a!=='');
+  }).length;
+  openConfirm('Submit test?','You have answered '+answeredCount+' of '+t.questions.length+' questions. This cannot be changed after submission.',()=>submitTest(false),'Submit');
+}
+function submitTest(auto){
+  clearInterval(runnerTimerInt);
+  const t=runner.test; const u=currentUser();
+  let score=0;
+  t.questions.forEach(q=>{
+    const a=runner.answers[q.id];
+    if(q.type==='single'){ if(a!=null && a===q.correct) score+=Number(q.marks); }
+    else if(q.type==='multiple'){
+      if(a && a.length){
+        const setA=[...a].sort().join(',');
+        const setC=[...q.correct].sort().join(',');
+        if(setA===setC) score+=Number(q.marks);
+      }
+    } else if(q.type==='integer'){ if(a!=null && Number(a)===Number(q.correct)) score+=Number(q.marks); }
+  });
+  const attemptId=uid('att');
+  const attempt={testId:t.id,userId:u.id,answers:runner.answers,score,startedAt:new Date(runner.startedAt).toISOString(),submittedAt:nowISO(),timeTakenSec:Math.round((Date.now()-runner.startedAt)/1000)};
+  dbFS.collection('attempts').doc(attemptId).set(attempt).then(()=>{
+    localUpsert('attempts',attemptId,attempt);
+    runner=null;
+    toast(auto?'Time up — test submitted automatically':'Test submitted!','success');
+    goPage('testreview',{attemptId});
+  }).catch(e=>{
+    toast('Failed to submit — check your connection and try again: '+friendlyError(e),'error');
+  });
+}
+
+/* ============ TEST REVIEW ============ */
+function renderTestReview(c){
+  const att=DB.attempts.find(a=>a.id===uiState.pageParams.attemptId);
+  if(!att){c.innerHTML='<div class="empty"><div class="e-icon">⚠️</div><div class="e-title">Attempt not found</div></div>';return;}
+  const t=testById(att.testId);
+  const mx=maxScoreOf(t); const pct=mx?Math.round(att.score/mx*100):0;
+  const student=userById(att.userId);
+  c.innerHTML=`
+  <div class="page-header"><h2>${esc(t.title)} — Result</h2><p>Submitted by ${esc(student?student.name:'')} on ${fmtDate(att.submittedAt)}</p></div>
+  <div class="g4" style="margin-bottom:20px;">
+    ${statCard('💯','Score',att.score+' / '+mx,'var(--blue)','var(--blue-lt)')}
+    ${statCard('📊','Percentage',pct+'%','var(--green)','var(--green-lt)')}
+    ${statCard('⏱','Time Taken',fmtSecs(att.timeTakenSec),'var(--teal)','var(--teal-lt)')}
+    ${statCard('❓','Questions',t.questions.length,'var(--purple)','var(--purple-lt)')}
+  </div>
+  <div class="card"><div class="card-header"><h3>Answer Review</h3></div>
+  ${t.questions.map((q,i)=>reviewQuestionHTML(q,i,att)).join('')}
+  </div>
+  <div style="margin-top:16px;"><button class="btn btn-ghost" onclick="history.back? goBackSmart(): goPage('dashboard')">← Back</button></div>`;
+}
+function goBackSmart(){ const u=currentUser(); goPage(u.role==='student'?'results':'alltests'); }
+function fmtSecs(s){const m=Math.floor(s/60), r=s%60; return m+'m '+r+'s';}
+function reviewQuestionHTML(q,i,att){
+  const a=att.answers[q.id];
+  let body='';
+  if(q.type==='single'||q.type==='multiple'){
+    const chosenSet = q.type==='single' ? (a?[a]:[]) : (a||[]);
+    body=q.options.map(o=>{
+      const isCorrect=q.type==='single'? o.id===q.correct : q.correct.includes(o.id);
+      const isChosen=chosenSet.includes(o.id);
+      let style='padding:8px 12px;border-radius:8px;margin-bottom:6px;border:1.5px solid var(--border);';
+      if(isCorrect) style+='background:var(--green-lt);border-color:var(--green);';
+      else if(isChosen && !isCorrect) style+='background:var(--red-lt);border-color:var(--red);';
+      return `<div style="${style}">${isChosen?'☑':'☐'} ${esc(o.text)} ${isCorrect?' ✅':''}${isChosen&&!isCorrect?' ❌':''}</div>`;
+    }).join('');
+  } else {
+    const correct=(a!=null && Number(a)===Number(q.correct));
+    body=`<div>Your answer: <strong>${a!=null?a:'—'}</strong> ${correct?'✅':'❌'}</div><div style="color:var(--ink3);font-size:.8rem;margin-top:4px;">Correct answer: ${q.correct}</div>`;
+  }
+  const gotMarks = (function(){
+    if(q.type==='single') return a!=null && a===q.correct;
+    if(q.type==='multiple') return a && a.length && [...a].sort().join(',')===[...q.correct].sort().join(',');
+    return a!=null && Number(a)===Number(q.correct);
+  })();
+  return `<div class="qcard">
+    <div class="qcard-head"><strong>Q${i+1}. ${esc(q.text)}</strong><span class="badge ${gotMarks?'b-approved':'b-rejected'}">${gotMarks?'+':''}${gotMarks?q.marks:0}/${q.marks}</span></div>
+    ${body}
+  </div>`;
+}
+
+/* ============ TEST ANALYTICS (teacher/admin per test) ============ */
+function renderTestAnalytics(c){
+  const t=testById(uiState.pageParams.testId);
+  if(!t){c.innerHTML='<div class="empty"><div class="e-icon">⚠️</div><div class="e-title">Test not found</div></div>';return;}
+  const atts=testAttempts(t.id);
+  const mx=maxScoreOf(t);
+  const avgPct= atts.length? Math.round(atts.reduce((s,a)=>s+(mx?a.score/mx*100:0),0)/atts.length):0;
+  const highPct= atts.length? Math.round(Math.max(...atts.map(a=>mx?a.score/mx*100:0))):0;
+  const lowPct= atts.length? Math.round(Math.min(...atts.map(a=>mx?a.score/mx*100:0))):0;
+  c.innerHTML=`
+  <div class="page-header"><h2>${esc(t.title)} — Analytics</h2><p>${esc(t.subject||'General')} · ${t.questions.length} questions · ${atts.length} submissions</p></div>
+  <div class="g4" style="margin-bottom:20px;">
+    ${statCard('🧾','Submissions',atts.length,'var(--blue)','var(--blue-lt)')}
+    ${statCard('📊','Average %',avgPct+'%','var(--teal)','var(--teal-lt)')}
+    ${statCard('🏆','Highest %',highPct+'%','var(--green)','var(--green-lt)')}
+    ${statCard('📉','Lowest %',lowPct+'%','var(--red)','var(--red-lt)')}
+  </div>
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-header"><h3>Question-wise Accuracy</h3></div>
+    <div class="bar-chart">${questionAccuracyBars(t,atts)}</div>
+  </div>
+  <div class="card">
+    <div class="card-header"><h3>Student Submissions</h3></div>
+    ${atts.length? submissionsTable(t,atts):'<div class="empty"><div class="e-icon">🧾</div><div class="e-title">No submissions yet</div></div>'}
+  </div>`;
+}
+function questionAccuracyBars(t,atts){
+  if(!atts.length) return '<div class="empty" style="width:100%"><div class="e-title">No data yet</div></div>';
+  return t.questions.map((q,i)=>{
+    let correct=0;
+    atts.forEach(att=>{
+      const a=att.answers[q.id];
+      let ok=false;
+      if(q.type==='single') ok = a!=null && a===q.correct;
+      else if(q.type==='multiple') ok = a && a.length && [...a].sort().join(',')===[...q.correct].sort().join(',');
+      else ok = a!=null && Number(a)===Number(q.correct);
+      if(ok) correct++;
+    });
+    const pct=Math.round(correct/atts.length*100);
+    return `<div class="bar-col"><div class="bar-val">${pct}%</div><div class="bar-fill" style="height:${Math.max(pct,3)}%;background:${pct>=60?'var(--green)':(pct>=40?'var(--gold)':'var(--red)')}"></div><div class="bar-lbl">Q${i+1}</div></div>`;
+  }).join('');
+}
+function submissionsTable(t,atts){
+  const mx=maxScoreOf(t);
+  const sorted=[...atts].sort((a,b)=>b.score-a.score);
+  return `<table class="datatable"><thead><tr><th>Student</th><th>School/Class</th><th>Score</th><th>%</th><th>Time</th><th>Submitted</th></tr></thead><tbody>
+  ${sorted.map(a=>{
+    const st=userById(a.userId); const pct=mx?Math.round(a.score/mx*100):0;
+    return `<tr><td><strong>${esc(st?st.name:'Unknown')}</strong></td><td>${st?esc(schoolName(st.school))+' / '+esc(className(st.cls)):'—'}</td>
+    <td>${a.score} / ${mx}</td><td><span class="badge ${pct>=60?'b-approved':(pct>=40?'b-pending':'b-rejected')}">${pct}%</span></td>
+    <td>${fmtSecs(a.timeTakenSec)}</td><td>${fmtDate(a.submittedAt)}</td></tr>`;
+  }).join('')}
+  </tbody></table>`;
+}
+
+/* ============ TEACHER ANALYTICS (overview across own tests) ============ */
+function renderTeacherAnalytics(c){
+  const u=currentUser();
+  const myTests=DB.tests.filter(t=>t.createdBy===u.id);
+  const atts=DB.attempts.filter(a=>myTests.some(t=>t.id===a.testId));
+  c.innerHTML=`<div class="page-header"><h2>Analytics</h2><p>Overview across all your tests and DPPs.</p></div>
+  <div class="g4" style="margin-bottom:20px;">
+    ${statCard('📝','Tests Created',myTests.length,'var(--blue)','var(--blue-lt)')}
+    ${statCard('🧾','Total Submissions',atts.length,'var(--purple)','var(--purple-lt)')}
+    ${statCard('📊','Average Score %',avgScorePct(atts,myTests)+'%','var(--teal)','var(--teal-lt)')}
+    ${statCard('🎓','Unique Students',new Set(atts.map(a=>a.userId)).size,'var(--green)','var(--green-lt)')}
+  </div>
+  <div class="card"><div class="card-header"><h3>Score by Test</h3></div>
+  <div class="bar-chart">${testScoreBars(myTests,atts)}</div></div>
+  <div class="card" style="margin-top:16px;"><div class="card-header"><h3>All Tests</h3></div>
+  ${myTests.length? myTests.map(t=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
+    <div><strong>${esc(t.title)}</strong><div style="font-size:.75rem;color:var(--ink4);">${testAttempts(t.id).length} submissions</div></div>
+    <button class="btn btn-ghost btn-sm" onclick="goPage('testanalytics',{testId:'${t.id}'})">View →</button></div>`).join(''):'<div class="empty"><div class="e-title">No tests yet</div></div>'}
+  </div>`;
+}
+function testScoreBars(tests,atts){
+  if(!tests.length) return '<div class="empty" style="width:100%"><div class="e-title">No data yet</div></div>';
+  return tests.slice(0,10).map(t=>{
+    const ta=atts.filter(a=>a.testId===t.id); const mx=maxScoreOf(t);
+    const pct= ta.length? Math.round(ta.reduce((s,a)=>s+(mx?a.score/mx*100:0),0)/ta.length):0;
+    return `<div class="bar-col"><div class="bar-val">${pct}%</div><div class="bar-fill" style="height:${Math.max(pct,3)}%;"></div><div class="bar-lbl" title="${esc(t.title)}">${esc(t.title.slice(0,10))}</div></div>`;
+  }).join('');
+}
+
+/* ============ ADMIN ANALYTICS (system-wide) ============ */
+function renderAdminAnalytics(c){
+  const atts=DB.attempts;
+  const tests=DB.tests;
+  c.innerHTML=`<div class="page-header"><h2>System Analytics</h2><p>Platform-wide performance overview.</p></div>
+  <div class="g4" style="margin-bottom:20px;">
+    ${statCard('📝','Total Tests',tests.length,'var(--blue)','var(--blue-lt)')}
+    ${statCard('🧾','Total Submissions',atts.length,'var(--purple)','var(--purple-lt)')}
+    ${statCard('📊','Average Score %',avgScorePct(atts,tests)+'%','var(--teal)','var(--teal-lt)')}
+    ${statCard('🎓','Active Students',DB.users.filter(u=>u.role==='student'&&u.status==='approved').length,'var(--green)','var(--green-lt)')}
+  </div>
+  <div class="card"><div class="card-header"><h3>Score by Test (Top 10 recent)</h3></div>
+  <div class="bar-chart">${testScoreBars([...tests].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)),atts)}</div></div>
+  <div class="card" style="margin-top:16px;"><div class="card-header"><h3>Top Performing Teachers</h3></div>
+  ${teacherLeaderboard()}
+  </div>`;
+}
+function teacherLeaderboard(){
+  const teachers=DB.users.filter(u=>u.role==='teacher'&&u.status==='approved');
+  if(!teachers.length) return '<div class="empty"><div class="e-title">No teachers yet</div></div>';
+  const rows=teachers.map(te=>{
+    const tt=DB.tests.filter(t=>t.createdBy===te.id);
+    const ta=DB.attempts.filter(a=>tt.some(t=>t.id===a.testId));
+    return {name:te.name,tests:tt.length,submissions:ta.length,avg:avgScorePct(ta,tt)};
+  }).sort((a,b)=>b.submissions-a.submissions);
+  return '<table class="datatable"><thead><tr><th>Teacher</th><th>Tests</th><th>Submissions</th><th>Avg Score</th></tr></thead><tbody>'+
+  rows.map(r=>`<tr><td><strong>${esc(r.name)}</strong></td><td>${r.tests}</td><td>${r.submissions}</td><td>${r.avg}%</td></tr>`).join('')+'</tbody></table>';
+}
+
+/* ============ STUDENT ANALYTICS ============ */
+function renderStudentAnalytics(c){
+  const u=currentUser();
+  const atts=[...userAttempts(u.id)].sort((a,b)=>new Date(a.submittedAt)-new Date(b.submittedAt));
+  c.innerHTML=`<div class="page-header"><h2>My Analytics</h2><p>Your performance trend across all attempted tests.</p></div>
+  <div class="g4" style="margin-bottom:20px;">
+    ${statCard('🧾','Tests Attempted',atts.length,'var(--blue)','var(--blue-lt)')}
+    ${statCard('📊','Average %',avgScorePctForUser(u.id)+'%','var(--teal)','var(--teal-lt)')}
+    ${statCard('🏆','Best %',bestScorePctForUser(u.id)+'%','var(--green)','var(--green-lt)')}
+    ${statCard('📚','Subjects Covered',new Set(atts.map(a=>{const t=testById(a.testId);return t?t.subject:'';})).size,'var(--purple)','var(--purple-lt)')}
+  </div>
+  <div class="card"><div class="card-header"><h3>Score Trend</h3></div>
+  <div class="bar-chart">${studentTrendBars(atts)}</div></div>
+  <div class="card" style="margin-top:16px;"><div class="card-header"><h3>Subject-wise Average</h3></div>
+  ${subjectAverages(atts)}
+  </div>`;
+}
+function studentTrendBars(atts){
+  if(!atts.length) return '<div class="empty" style="width:100%"><div class="e-title">No attempts yet</div></div>';
+  return atts.slice(-10).map((a,i)=>{
+    const t=testById(a.testId); const mx=t?maxScoreOf(t):1; const pct=mx?Math.round(a.score/mx*100):0;
+    return `<div class="bar-col"><div class="bar-val">${pct}%</div><div class="bar-fill" style="height:${Math.max(pct,3)}%;"></div><div class="bar-lbl" title="${t?esc(t.title):''}">#${i+1}</div></div>`;
+  }).join('');
+}
+function subjectAverages(atts){
+  const bySubj={};
+  atts.forEach(a=>{const t=testById(a.testId); if(!t)return; const subj=t.subject||'General'; const mx=maxScoreOf(t);
+    if(!bySubj[subj]) bySubj[subj]={total:0,cnt:0};
+    if(mx){bySubj[subj].total+=a.score/mx*100; bySubj[subj].cnt++;}
+  });
+  const keys=Object.keys(bySubj);
+  if(!keys.length) return '<div class="empty"><div class="e-title">No data yet</div></div>';
+  return keys.map(k=>{
+    const avg=Math.round(bySubj[k].total/bySubj[k].cnt);
+    return `<div style="margin-bottom:14px;"><div style="display:flex;justify-content:space-between;font-size:.82rem;margin-bottom:5px;"><strong>${esc(k)}</strong><span>${avg}%</span></div>
+    <div class="progress-track"><div class="progress-fill" style="width:${avg}%;"></div></div></div>`;
+  }).join('');
+}
+
+/* ============ PROFILE ============ */
+function renderProfile(c){
+  const u=currentUser();
+  c.innerHTML=`<div class="page-header"><h2>My Profile</h2><p>Manage your account details.</p></div>
+  <div class="card" style="max-width:520px;">
+    <div class="field"><label>Full Name</label><input type="text" id="pName" value="${esc(u.name)}"></div>
+    <div class="field"><label>Email</label><input type="text" value="${esc(u.email)}" disabled style="opacity:.6;"></div>
+    ${u.role!=='admin'?`<div class="g2">
+      <div class="field"><label>School</label><input type="text" value="${esc(schoolName(u.school))}" disabled style="opacity:.6;"></div>
+      <div class="field"><label>Class</label><input type="text" value="${esc(className(u.cls))}" disabled style="opacity:.6;"></div>
+    </div>`:''}
+    <div class="field"><label>Phone</label><input type="text" id="pPhone" value="${esc(u.phone||'')}"></div>
+    ${u.role==='teacher'?'<div class="field"><label>Subject</label><input type="text" id="pSubject" value="'+esc(u.subject||'')+'"></div>':''}
+    <button class="btn btn-primary" onclick="saveProfile()">💾 Save Changes</button>
+    <div class="sep"></div>
+    <div class="field"><label>New Password (leave blank to keep current)</label><input type="password" id="pPassword" placeholder="New password"></div>
+    <button class="btn btn-ghost" onclick="changePassword()">🔒 Update Password</button>
+  </div>`;
+}
+async function saveProfile(){
+  const u=currentUser();
+  const name=document.getElementById('pName').value.trim()||u.name;
+  const phone=document.getElementById('pPhone').value.trim();
+  const patch={name,phone};
+  const subjEl=document.getElementById('pSubject');
+  if(subjEl) patch.subject=subjEl.value.trim();
+  try{
+    await dbFS.collection('users').doc(u.id).update(patch);
+    localUpdate('users',u.id,patch);
+    toast('Profile updated','success');
+    document.getElementById('sbName').textContent=name;
+    document.getElementById('sbAvatar').textContent=name.charAt(0).toUpperCase();
+  }catch(e){ toast('Failed to update profile: '+friendlyError(e),'error'); }
+}
+async function changePassword(){
+  const pw=document.getElementById('pPassword').value;
+  if(!pw||pw.length<6){toast('Password must be at least 6 characters','error');return;}
+  try{
+    await auth.currentUser.updatePassword(pw);
+    toast('Password updated','success');
+    document.getElementById('pPassword').value='';
+  }catch(e){ toast(friendlyError(e),'error'); }
+}
+
+/* ============ PROFILE MODAL (account icon) ============ */
+let pmTab='info';
+function openProfileModal(){
+  const u=currentUser(); if(!u) return;
+  document.getElementById('pmAvatar').textContent=u.name.charAt(0).toUpperCase();
+  document.getElementById('pmName').textContent=u.name;
+  document.getElementById('pmEmail').textContent=u.email;
+  document.getElementById('pmRoleBadge').className='badge b-'+u.role;
+  document.getElementById('pmRoleBadge').textContent=u.role.charAt(0).toUpperCase()+u.role.slice(1);
+  pmTab='info';
+  markProfileModalTab();
+  renderProfileModalContent();
+  document.getElementById('profileModalOverlay').classList.remove('hidden');
+}
+function closeProfileModal(){document.getElementById('profileModalOverlay').classList.add('hidden');}
+function switchProfileModalTab(t){pmTab=t; markProfileModalTab(); renderProfileModalContent();}
+function markProfileModalTab(){
+  document.getElementById('pmTabInfo').classList.toggle('active',pmTab==='info');
+  document.getElementById('pmTabStats').classList.toggle('active',pmTab==='stats');
+  document.getElementById('pmTabSecurity').classList.toggle('active',pmTab==='security');
+}
+function renderProfileModalContent(){
+  const u=currentUser();
+  const el=document.getElementById('pmContent');
+  if(pmTab==='info'){
+    el.innerHTML=`
+    <div class="field"><label>Full Name</label><input type="text" id="pmFieldName" value="${esc(u.name)}"></div>
+    <div class="g2">
+      <div class="field"><label>Phone</label><input type="text" id="pmFieldPhone" value="${esc(u.phone||'')}"></div>
+      ${u.role==='teacher'?'<div class="field"><label>Subject</label><input type="text" id="pmFieldSubject" value="'+esc(u.subject||'')+'"></div>':'<div></div>'}
+    </div>
+    ${u.role!=='admin'?`<div class="g2">
+      <div class="field"><label>School</label><input type="text" value="${esc(schoolName(u.school))}" disabled style="opacity:.6;"></div>
+      <div class="field"><label>Class</label><input type="text" value="${esc(className(u.cls))}" disabled style="opacity:.6;"></div>
+    </div>`:''}
+    <button class="btn btn-primary" onclick="saveProfileModalInfo()">💾 Save Changes</button>`;
+  } else if(pmTab==='stats'){
+    el.innerHTML = profileStatsHTML(u);
+  } else {
+    el.innerHTML=`
+    <div class="field"><label>New Password</label><input type="password" id="pmNewPw" placeholder="min 6 characters"></div>
+    <div class="field"><label>Confirm New Password</label><input type="password" id="pmNewPw2" placeholder="repeat password"></div>
+    <button class="btn btn-primary" onclick="savePasswordModal()">🔒 Update Password</button>
+    <div class="sep"></div>
+    <div style="font-size:.78rem;color:var(--ink3);">Account created: ${fmtDate(u.createdAt)}</div>
+    <div style="font-size:.78rem;color:var(--ink3);margin-top:4px;">Status: <span class="badge b-${u.status}">${u.status}</span></div>`;
+  }
+}
+function profileStatsHTML(u){
+  if(u.role==='student'){
+    const atts=userAttempts(u.id);
+    return `<div class="g3">
+      ${miniStat('Tests Attempted',atts.length)}
+      ${miniStat('Average %',avgScorePctForUser(u.id)+'%')}
+      ${miniStat('Best %',bestScorePctForUser(u.id)+'%')}
+    </div>`;
+  } else if(u.role==='teacher'){
+    const myTests=DB.tests.filter(t=>t.createdBy===u.id);
+    const atts=DB.attempts.filter(a=>myTests.some(t=>t.id===a.testId));
+    return `<div class="g3">
+      ${miniStat('Tests Created',myTests.length)}
+      ${miniStat('Submissions',atts.length)}
+      ${miniStat('Avg Score %',avgScorePct(atts,myTests)+'%')}
+    </div>`;
+  } else {
+    return `<div class="g3">
+      ${miniStat('Total Users',DB.users.filter(x=>x.role!=='admin').length)}
+      ${miniStat('Total Tests',DB.tests.length)}
+      ${miniStat('Total Attempts',DB.attempts.length)}
+    </div>`;
+  }
+}
+async function saveProfileModalInfo(){
+  const u=currentUser();
+  const name=document.getElementById('pmFieldName').value.trim()||u.name;
+  const phone=document.getElementById('pmFieldPhone').value.trim();
+  const patch={name,phone};
+  const subjEl=document.getElementById('pmFieldSubject');
+  if(subjEl) patch.subject=subjEl.value.trim();
+  try{
+    await dbFS.collection('users').doc(u.id).update(patch);
+    localUpdate('users',u.id,patch);
+    document.getElementById('sbName').textContent=name;
+    document.getElementById('sbAvatar').textContent=name.charAt(0).toUpperCase();
+    document.getElementById('tbAvatarBtn').textContent=name.charAt(0).toUpperCase();
+    document.getElementById('pmName').textContent=name;
+    document.getElementById('pmAvatar').textContent=name.charAt(0).toUpperCase();
+    toast('Profile updated','success');
+  }catch(e){ toast('Failed to update profile: '+friendlyError(e),'error'); }
+}
+async function savePasswordModal(){
+  const pw=document.getElementById('pmNewPw').value;
+  const pw2=document.getElementById('pmNewPw2').value;
+  if(!pw||pw.length<6){toast('Password must be at least 6 characters','error');return;}
+  if(pw!==pw2){toast('Passwords do not match','error');return;}
+  try{
+    await auth.currentUser.updatePassword(pw);
+    toast('Password updated','success');
+    document.getElementById('pmNewPw').value=''; document.getElementById('pmNewPw2').value='';
+  }catch(e){ toast(friendlyError(e),'error'); }
+}
+
+/* ============ PRE-LOGIN HELP & SUPPORT (no account needed) ============ */
+function genTicketNo(){
+  const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // avoids visually-confusing chars
+  let s=''; for(let i=0;i<6;i++) s+=chars[Math.floor(Math.random()*chars.length)];
+  return 'PH-'+s;
+}
+function openHelpSupport(tab){
+  document.getElementById('helpSupportOverlay').classList.remove('hidden');
+  document.getElementById('hsSubmitForm').style.display='block';
+  document.getElementById('hsSubmitSuccess').style.display='none';
+  document.getElementById('hsTrackResult').innerHTML='';
+  hsSwitchTab(tab==='track'?'track':'submit');
+}
+function closeHelpSupport(){
+  document.getElementById('helpSupportOverlay').classList.add('hidden');
+}
+function hsSwitchTab(t){
+  document.getElementById('hsTabSubmitBtn').classList.toggle('active',t==='submit');
+  document.getElementById('hsTabTrackBtn').classList.toggle('active',t==='track');
+  document.getElementById('hsPanelSubmit').style.display=t==='submit'?'block':'none';
+  document.getElementById('hsPanelTrack').style.display=t==='track'?'block':'none';
+}
+async function submitPublicTicket(){
+  const name=document.getElementById('hsName').value.trim();
+  const email=document.getElementById('hsEmail').value.trim();
+  const phone=document.getElementById('hsPhone').value.trim();
+  const category=document.getElementById('hsCategory').value;
+  const subject=document.getElementById('hsSubject').value.trim();
+  const message=document.getElementById('hsMessage').value.trim();
+  if(!name||!email||!subject||!message){toast('Please fill in all required fields','error');return;}
+  const btn=document.getElementById('hsSubmitBtn');
+  if(btn){btn.disabled=true; btn.textContent='Submitting...';}
+  const ticketNo=genTicketNo();
+  const data={ticketNo,userId:null,name,email,phone,category,subject,message,status:'Open',reply:'',repliedAt:null,createdAt:nowISO()};
+  try{
+    await dbFS.collection('tickets').doc(ticketNo).set(data);
+    document.getElementById('hsTicketNo').textContent=ticketNo;
+    document.getElementById('hsSubmitForm').style.display='none';
+    document.getElementById('hsSubmitSuccess').style.display='block';
+  }catch(e){
+    toast('Failed to submit: '+friendlyError(e),'error');
+  }finally{
+    if(btn){btn.disabled=false; btn.textContent='📨 Submit Query';}
+  }
+}
+function hsGoTrackJustSubmitted(){
+  const tn=document.getElementById('hsTicketNo').textContent;
+  hsSwitchTab('track');
+  document.getElementById('hsTrackInput').value=tn;
+  trackPublicTicket();
+}
+async function trackPublicTicket(){
+  const raw=document.getElementById('hsTrackInput').value.trim().toUpperCase();
+  const resultEl=document.getElementById('hsTrackResult');
+  if(!raw){toast('Enter a ticket number','error');return;}
+  resultEl.innerHTML='<p class="modal-sub">Searching…</p>';
+  try{
+    const doc=await dbFS.collection('tickets').doc(raw).get();
+    if(!doc.exists){
+      resultEl.innerHTML='<div class="empty"><div class="e-icon">🔍</div><div class="e-title">Not found</div><div class="e-sub">Double-check the ticket number and try again.</div></div>';
+      return;
+    }
+    const t=doc.data();
+    const statusClass=t.status==='Open'?'b-open':(t.status==='In Progress'?'b-inprogress':'b-resolved');
+    resultEl.innerHTML=`<div class="item-card" style="margin-top:14px;">
+      <div class="ic-title">${esc(t.subject)} <span class="badge b-teacher">${esc(t.category)}</span> <span class="badge ${statusClass}">${t.status}</span></div>
+      <div class="ic-meta"><span>🕒 ${fmtDate(t.createdAt)}</span></div>
+      <div style="font-size:.82rem;color:var(--ink2);margin-top:8px;line-height:1.6;">${esc(t.message)}</div>
+      ${t.reply? '<div class="ticket-reply-box"><strong>Admin reply:</strong> '+esc(t.reply)+'<div style="font-size:.7rem;color:var(--ink4);margin-top:4px;">'+fmtDate(t.repliedAt)+'</div></div>' : '<p class="modal-sub" style="margin-top:10px;">No reply yet — check back soon.</p>'}
+    </div>`;
+  }catch(e){
+    resultEl.innerHTML='<div class="empty"><div class="e-icon">⚠️</div><div class="e-title">Could not fetch</div><div class="e-sub">'+esc(friendlyError(e))+'</div></div>';
+  }
+}
+
+/* ============ HELP & SUPPORT / QUERY TICKETS (inside the app, logged in) ============ */
+function openTicketCount(){return DB.tickets.filter(t=>t.status==='Open').length;}
+function myTicketCount(userId){return DB.tickets.filter(t=>t.userId===userId).length;}
+
+function renderSupport(c){
+  const u=currentUser();
+  const myTickets=[...DB.tickets].filter(t=>t.userId===u.id).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  c.innerHTML=`
+  <div class="page-header"><h2>Help &amp; Support</h2><p>Raise a query or report an issue — the admin will review and reply here.</p></div>
+  <div class="g2" style="align-items:flex-start;">
+    <div class="card">
+      <div class="card-header"><h3>📨 Raise a New Query</h3></div>
+      <div class="field"><label>Category</label><select id="tkCategory">
+        <option value="Query">General Query</option>
+        <option value="Bug">Bug / Technical Issue</option>
+        <option value="Test Issue">Test / Question Issue</option>
+        <option value="Account">Account / Access Issue</option>
+        <option value="Other">Other</option>
+      </select></div>
+      <div class="field"><label>Subject <span class="req">*</span></label><input type="text" id="tkSubject" placeholder="Short summary of your query"></div>
+      <div class="field"><label>Message <span class="req">*</span></label><textarea id="tkMessage" placeholder="Describe your query or issue in detail..." style="min-height:110px;"></textarea></div>
+      <button class="btn btn-primary btn-full" onclick="submitTicket()">📨 Submit Query</button>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>🗂️ My Queries (${myTickets.length})</h3></div>
+      <div id="myTicketsWrap"></div>
+    </div>
+  </div>`;
+  const wrap=document.getElementById('myTicketsWrap');
+  wrap.innerHTML = myTickets.length? myTickets.map(t=>myTicketCardHTML(t)).join('') : '<div class="empty"><div class="e-icon">🗂️</div><div class="e-title">No queries yet</div><div class="e-sub">Anything you raise will show up here.</div></div>';
+}
+function myTicketCardHTML(t){
+  const statusClass=t.status==='Open'?'b-open':(t.status==='In Progress'?'b-inprogress':'b-resolved');
+  return `<div class="item-card">
+    <div class="ic-top">
+      <div><div class="ic-title">${esc(t.subject)} <span class="badge b-teacher">${esc(t.category)}</span> <span class="badge ${statusClass}">${t.status}</span></div>
+      <div class="ic-meta"><span>🎫 ${esc(t.ticketNo||t.id)}</span><span>🕒 ${fmtDate(t.createdAt)}</span></div>
+      <div style="font-size:.82rem;color:var(--ink2);margin-top:8px;line-height:1.6;">${esc(t.message)}</div>
+      ${t.reply? '<div class="ticket-reply-box"><strong>Admin reply:</strong> '+esc(t.reply)+'<div style="font-size:.7rem;color:var(--ink4);margin-top:4px;">'+fmtDate(t.repliedAt)+'</div></div>' : ''}
+      </div>
+    </div>
+  </div>`;
+}
+async function submitTicket(){
+  const category=document.getElementById('tkCategory').value;
+  const subject=document.getElementById('tkSubject').value.trim();
+  const message=document.getElementById('tkMessage').value.trim();
+  if(!subject||!message){toast('Please fill in subject and message','error');return;}
+  const u=currentUser();
+  const ticketNo=genTicketNo();
+  const data={ticketNo,userId:u.id,name:u.name,email:u.email,phone:u.phone||'',category,subject,message,status:'Open',reply:'',repliedAt:null,createdAt:nowISO()};
+  try{
+    await dbFS.collection('tickets').doc(ticketNo).set(data);
+    localUpsert('tickets',ticketNo,data);
+    toast('Query submitted (ticket '+ticketNo+') — admin will respond soon','success');
+    buildNav();
+    renderSupport(document.getElementById('content'));
+  }catch(e){ toast('Failed to submit: '+friendlyError(e),'error'); }
+}
+
+function renderSupportTickets(c){
+  c.innerHTML=`<div class="page-header"><h2>Support Tickets</h2><p>Queries and issues raised by teachers and students.</p></div>
+  <div class="page-toolbar">
+    <div class="search-box">🔍<input type="text" id="ticketSearch" placeholder="Search by subject or user..." oninput="renderTicketsList()"></div>
+    <button class="filter-btn active" data-tf="all" onclick="setTicketFilter('all')">All</button>
+    <button class="filter-btn" data-tf="Open" onclick="setTicketFilter('Open')">Open</button>
+    <button class="filter-btn" data-tf="In Progress" onclick="setTicketFilter('In Progress')">In Progress</button>
+    <button class="filter-btn" data-tf="Resolved" onclick="setTicketFilter('Resolved')">Resolved</button>
+  </div>
+  <div id="ticketsList"></div>`;
+  window._ticketFilter='all';
+  renderTicketsList();
+}
+function setTicketFilter(f){
+  window._ticketFilter=f;
+  document.querySelectorAll('[data-tf]').forEach(b=>b.classList.toggle('active',b.dataset.tf===f));
+  renderTicketsList();
+}
+function renderTicketsList(){
+  const q=(document.getElementById('ticketSearch')?.value||'').toLowerCase();
+  const f=window._ticketFilter||'all';
+  let list=[...DB.tickets].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  if(f!=='all') list=list.filter(t=>t.status===f);
+  if(q) list=list.filter(t=>{
+    const u=t.userId?userById(t.userId):null;
+    const name=u?u.name:(t.name||'');
+    return t.subject.toLowerCase().includes(q) || name.toLowerCase().includes(q) || (t.ticketNo||'').toLowerCase().includes(q);
+  });
+  const wrap=document.getElementById('ticketsList');
+  if(!list.length){wrap.innerHTML='<div class="empty"><div class="e-icon">🗂️</div><div class="e-title">No queries found</div></div>';return;}
+  wrap.innerHTML=list.map(t=>adminTicketCardHTML(t)).join('');
+}
+function adminTicketCardHTML(t){
+  const u=t.userId?userById(t.userId):null;
+  const statusClass=t.status==='Open'?'b-open':(t.status==='In Progress'?'b-inprogress':'b-resolved');
+  const whoLabel = u ? esc(u.name) : esc(t.name||'Unknown')+' (not logged in)';
+  const roleLabel = u ? esc(u.role) : 'visitor';
+  const contactLine = !u && (t.email||t.phone) ? `<div class="ic-meta"><span>✉️ ${esc(t.email||'—')}</span>${t.phone?'<span>📞 '+esc(t.phone)+'</span>':''}</div>` : '';
+  return `<div class="item-card">
+    <div class="ic-top">
+      <div>
+        <div class="ic-title">${esc(t.subject)} <span class="badge b-teacher">${esc(t.category)}</span> <span class="badge ${statusClass}">${t.status}</span></div>
+        <div class="ic-meta">
+          <span>🎫 ${esc(t.ticketNo||t.id)}</span>
+          <span>👤 ${whoLabel}</span>
+          <span>🏷️ ${roleLabel}</span>
+          <span>🕒 ${fmtDate(t.createdAt)}</span>
+        </div>
+        ${contactLine}
+        <div style="font-size:.82rem;color:var(--ink2);margin-top:8px;line-height:1.6;">${esc(t.message)}</div>
+        ${t.reply? '<div class="ticket-reply-box"><strong>Your reply:</strong> '+esc(t.reply)+'<div style="font-size:.7rem;color:var(--ink4);margin-top:4px;">'+fmtDate(t.repliedAt)+'</div></div>' : ''}
+      </div>
+    </div>
+    <div class="ic-actions">
+      <select id="statusSel_${t.id}" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.77rem;">
+        <option value="Open" ${t.status==='Open'?'selected':''}>Open</option>
+        <option value="In Progress" ${t.status==='In Progress'?'selected':''}>In Progress</option>
+        <option value="Resolved" ${t.status==='Resolved'?'selected':''}>Resolved</option>
+      </select>
+      <input type="text" id="replyInput_${t.id}" placeholder="Write a reply..." style="flex:1;min-width:160px;padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.8rem;" value="${esc(t.reply||'')}">
+      <button class="btn btn-primary btn-xs" onclick="replyTicket('${t.id}')">📨 Send Reply</button>
+    </div>
+  </div>`;
+}
+async function replyTicket(id){
+  const status=document.getElementById('statusSel_'+id).value;
+  const reply=document.getElementById('replyInput_'+id).value.trim();
+  const patch={status};
+  if(reply){patch.reply=reply; patch.repliedAt=nowISO();}
+  try{
+    await dbFS.collection('tickets').doc(id).update(patch);
+    localUpdate('tickets',id,patch);
+    toast('Ticket updated','success');
+    buildNav();
+    renderTicketsList();
+  }catch(e){ toast('Failed to update: '+friendlyError(e),'error'); }
+}
+
+/* ============ INIT ============ */
+function init(){
+  initDark();
+  attachPublicListeners(); // schools/classes, needed on the registration form pre-login
+  populateRegSelects();
+  // Login/logout/app-entry itself is driven by auth.onAuthStateChanged() above,
+  // which fires once automatically on page load with whatever session Firebase
+  // Auth already has persisted (or null, if nobody is logged in).
+}
+init();
+</script>
+</body>
+</html>
