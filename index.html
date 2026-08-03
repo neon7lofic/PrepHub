@@ -437,6 +437,13 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const dbFS = firebase.firestore();
+// Each browser tab gets its own independent login instead of sharing one login
+// across every open tab. Trade-off: closing a tab and opening a fresh one means
+// logging in again (a refresh of the SAME tab stays logged in fine) — but it lets
+// you have an admin logged in in one tab and a teacher logged in in another at
+// the same time, which is useful for testing and keeps roles from bleeding
+// across tabs.
+auth.setPersistence(firebase.auth.Auth.Persistence.SESSION).catch(()=>{});
 
 /* ============ STORAGE / STATE ============
    DB is now a live local mirror of Firestore, kept in sync by onSnapshot listeners.
