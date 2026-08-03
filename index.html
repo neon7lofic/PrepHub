@@ -450,7 +450,7 @@ auth.setPersistence(firebase.auth.Auth.Persistence.SESSION).catch(()=>{});
    All the render functions below still read DB.users / DB.tests / etc. synchronously
    exactly like before — only the write path (create/update/delete) goes through Firestore.
 */
-let DB={users:[],schools:[],classes:[],tests:[],attempts:[],tickets:[]};
+let DB={users:[],schools:[],classes:[],tests:[],attempts:[],tickets:[],conversations:[]};
 let currentProfile=null;
 let uiState={sidebarCollapsed:false, page:'dashboard', pageParams:{}};
 let privateListeners=[], publicListeners=[];
@@ -526,8 +526,20 @@ function attachPrivateListeners(){
     DB.tickets=snap.docs.map(d=>({id:d.id,...d.data()}));
     refreshUI();
   }, e=>toast('Sync error (tickets): '+friendlyError(e),'error')));
+  privateListeners.push(dbFS.collection('conversations').where('participants','array-contains',currentProfile.id).onSnapshot(snap=>{
+    DB.conversations=snap.docs.map(d=>({id:d.id,...d.data()}));
+    buildNav();
+    // Messages is excluded from refreshUI's full-page re-render (it would wipe
+    // whatever the person is mid-typing into the message box), so update just
+    // the conversation list sidebar directly instead.
+    if(uiState.page==='messages') renderConvoList();
+  }, e=>toast('Sync error (messages): '+friendlyError(e),'error')));
 }
-function detachPrivateListeners(){ privateListeners.forEach(u=>u()); privateListeners=[]; }
+function detachPrivateListeners(){
+  privateListeners.forEach(u=>u()); privateListeners=[];
+  if(chatState.msgUnsub){ chatState.msgUnsub(); chatState.msgUnsub=null; }
+  chatState.otherUserId=null; chatState.messages=[];
+}
 
 // Re-renders the nav (badges) and, when it's safe to do so, the current page.
 // Pages with in-progress form input (creating/editing a test, mid-attempt) are left
@@ -535,7 +547,7 @@ function detachPrivateListeners(){ privateListeners.forEach(u=>u()); privateList
 function refreshUI(){
   if(!currentProfile) return;
   buildNav();
-  const skipAutoRerender=['createtest','edittest','testrunner'];
+  const skipAutoRerender=['createtest','edittest','testrunner','messages'];
   if(!skipAutoRerender.includes(uiState.page)) render();
 }
 
@@ -776,6 +788,7 @@ function buildNav(){
       {p:'analytics',icon:'📈',label:'Analytics'},
       {sec:'Support'},
       {p:'supporttickets',icon:'🆘',label:'Support Tickets',badge:openTicketCount()||null},
+      {p:'messages',icon:'💬',label:'Messages'},
       {sec:''},
       {p:'profile',icon:'⚙️',label:'My Profile'}
     ];
@@ -789,6 +802,7 @@ function buildNav(){
       {p:'analytics',icon:'📈',label:'Analytics'},
       {sec:'Support'},
       {p:'support',icon:'🆘',label:'Help & Support'},
+      {p:'messages',icon:'💬',label:'Messages'},
       {sec:''},
       {p:'profile',icon:'⚙️',label:'My Profile'}
     ];
@@ -802,6 +816,7 @@ function buildNav(){
       {p:'analytics',icon:'📈',label:'My Analytics'},
       {sec:'Support'},
       {p:'support',icon:'🆘',label:'Help & Support'},
+      {p:'messages',icon:'💬',label:'Messages'},
       {sec:''},
       {p:'profile',icon:'⚙️',label:'My Profile'}
     ];
@@ -823,7 +838,7 @@ function goPage(page,params){
   const titles={dashboard:'Dashboard',approvals:'Pending Approvals',users:'Manage Users',registry:'Schools & Classes',
     alltests:'All Tests',analytics:'Analytics',createtest:'Create Test / DPP',mytests:'My Tests',available:'Available Tests',
     results:'My Results',profile:'My Profile',testrunner:'Attempt Test',testreview:'Test Review',testanalytics:'Test Analytics',edittest:'Edit Test',
-    support:'Help & Support',supporttickets:'Support Tickets'};
+    support:'Help & Support',supporttickets:'Support Tickets',messages:'Messages'};
   document.getElementById('pageTitle').textContent=titles[page]||'PrepHub';
   render();
 }
@@ -847,7 +862,8 @@ function render(){
     testanalytics: renderTestAnalytics,
     edittest: renderCreateTest,
     support: renderSupport,
-    supporttickets: renderSupportTickets
+    supporttickets: renderSupportTickets,
+    messages: renderMessages
   };
   c.innerHTML='';
   (fns[uiState.page]||renderNotFound)(c);
@@ -1374,11 +1390,12 @@ function bestScorePctForUser(userId){
   return Math.round(best);
 }
 function studentTestCard(t){
-  const done=hasAttempted(currentUser().id,t.id);
+  const myAtts=DB.attempts.filter(a=>a.userId===currentUser().id && a.testId===t.id);
+  const done=myAtts.length>0;
   return `<div class="item-card">
     <div class="ic-top">
       <div>
-        <div class="ic-title">${esc(t.title)} <span class="badge b-${t.type==='DPP'?'dpp':'series'}">${t.type}</span></div>
+        <div class="ic-title">${esc(t.title)} <span class="badge b-${t.type==='DPP'?'dpp':'series'}">${t.type}</span>${done?' <span class="badge b-approved">'+myAtts.length+' attempt'+(myAtts.length>1?'s':'')+'</span>':''}</div>
         <div class="ic-meta">
           <span>📖 ${esc(t.subject||'General')}</span>
           <span>❓ ${t.questions.length} Qs</span>
@@ -1388,14 +1405,16 @@ function studentTestCard(t){
       </div>
     </div>
     <div class="ic-actions">
-      ${done?'<button class="btn btn-ghost btn-sm" onclick="viewAttemptReview(\''+t.id+'\')">📄 View Result</button>':'<button class="btn btn-primary btn-sm" onclick="startTest(\''+t.id+'\')">▶ Start Test</button>'}
+      ${done?'<button class="btn btn-ghost btn-sm" onclick="viewAttemptReview(\''+t.id+'\')">📄 View Results</button>':''}
+      <button class="btn ${done?'btn-blue':'btn-primary'} btn-sm" onclick="startTest('${t.id}')">${done?'🔁 Retake Test':'▶ Start Test'}</button>
     </div>
   </div>`;
 }
 function viewAttemptReview(testId){
   const u=currentUser();
-  const att=DB.attempts.find(a=>a.testId===testId && a.userId===u.id);
-  goPage('testreview',{attemptId:att.id});
+  const atts=DB.attempts.filter(a=>a.testId===testId && a.userId===u.id).sort((a,b)=>new Date(a.startedAt)-new Date(b.startedAt));
+  if(!atts.length) return;
+  goPage('testreview',{attemptId:atts[atts.length-1].id}); // most recent attempt by default
 }
 
 /* ============ STUDENT: AVAILABLE TESTS ============ */
@@ -1555,8 +1574,17 @@ function renderTestReview(c){
   const t=testById(att.testId);
   const mx=maxScoreOf(t); const pct=mx?Math.round(att.score/mx*100):0;
   const student=userById(att.userId);
+  const allAtts=[...DB.attempts.filter(a=>a.testId===att.testId && a.userId===att.userId)].sort((a,b)=>new Date(a.startedAt)-new Date(b.startedAt));
+  const attemptSelector = allAtts.length>1 ? `<div class="field" style="max-width:260px;margin-bottom:16px;"><label>Viewing Attempt</label>
+    <select onchange="goPage('testreview',{attemptId:this.value})">
+      ${allAtts.map((a,i)=>{
+        const apct=mx?Math.round(a.score/mx*100):0;
+        return `<option value="${a.id}" ${a.id===att.id?'selected':''}>Attempt ${i+1} — ${fmtDate(a.submittedAt)} (${apct}%)</option>`;
+      }).join('')}
+    </select></div>` : '';
   c.innerHTML=`
   <div class="page-header"><h2>${esc(t.title)} — Result</h2><p>Submitted by ${esc(student?student.name:'')} on ${fmtDate(att.submittedAt)}</p></div>
+  ${attemptSelector}
   <div class="g4" style="margin-bottom:20px;">
     ${statCard('💯','Score',att.score+' / '+mx,'var(--blue)','var(--blue-lt)')}
     ${statCard('📊','Percentage',pct+'%','var(--green)','var(--green-lt)')}
@@ -2107,6 +2135,133 @@ async function replyTicket(id){
     buildNav();
     renderTicketsList();
   }catch(e){ toast('Failed to update: '+friendlyError(e),'error'); }
+}
+
+/* ============ DIRECT MESSAGES (any user \u2194 any user) ============ */
+let chatState={otherUserId:null, messages:[], msgUnsub:null};
+function convoId(a,b){ return [a,b].sort().join('__'); }
+function otherParticipant(convo){ return convo.participants.find(p=>p!==currentProfile.id); }
+
+function renderMessages(c){
+  c.innerHTML=`
+  <div class="page-header"><h2>Messages</h2><p>Direct messages with any teacher, student, or admin.</p></div>
+  <div class="card" style="display:flex;height:70vh;overflow:hidden;padding:0;">
+    <div style="width:250px;flex-shrink:0;border-right:1.5px solid var(--border);overflow-y:auto;display:flex;flex-direction:column;">
+      <div style="padding:12px;border-bottom:1.5px solid var(--border);"><button class="btn btn-primary btn-sm btn-full" onclick="openNewChatPicker()">✉️ New Message</button></div>
+      <div id="convoListWrap" style="flex:1;overflow-y:auto;"></div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
+      <div id="chatHeader" style="padding:14px 18px;border-bottom:1.5px solid var(--border);font-weight:700;"></div>
+      <div id="chatMessages" style="flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:8px;"></div>
+      <div id="chatInputWrap" style="padding:12px;border-top:1.5px solid var(--border);"></div>
+    </div>
+  </div>`;
+  renderConvoList();
+  if(chatState.otherUserId) openChat(chatState.otherUserId); else renderChatEmptyState();
+}
+function renderChatEmptyState(){
+  document.getElementById('chatHeader').textContent='';
+  document.getElementById('chatMessages').innerHTML='<div class="empty"><div class="e-icon">💬</div><div class="e-title">No conversation open</div><div class="e-sub">Pick someone from the left, or start a new message.</div></div>';
+  document.getElementById('chatInputWrap').innerHTML='';
+}
+function renderConvoList(){
+  const wrap=document.getElementById('convoListWrap');
+  if(!wrap) return; // page navigated away
+  const sorted=[...DB.conversations].sort((a,b)=>new Date(b.lastMessageAt||b.createdAt||0)-new Date(a.lastMessageAt||a.createdAt||0));
+  if(!sorted.length){ wrap.innerHTML='<div class="empty" style="padding:20px;"><div class="e-icon">📭</div><div class="e-sub">No conversations yet</div></div>'; return; }
+  wrap.innerHTML=sorted.map(convo=>{
+    const otherId=otherParticipant(convo);
+    const other=userById(otherId);
+    const active=chatState.otherUserId===otherId;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;${active?'background:var(--bg2,#f1f1f1);':''}" onclick="openChat('${otherId}')">
+      <div style="width:32px;height:32px;flex-shrink:0;border-radius:50%;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;">${esc((other?other.name:'?').charAt(0).toUpperCase())}</div>
+      <div style="overflow:hidden;">
+        <div style="font-weight:600;font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(other?other.name:'Unknown user')} <span style="font-weight:400;color:var(--ink4);font-size:.7rem;">(${esc(other?other.role:'')})</span></div>
+        <div style="font-size:.74rem;color:var(--ink4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(convo.lastMessage||'')}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+function openNewChatPicker(){
+  const me=currentUser();
+  const others=DB.users.filter(u=>u.status==='approved' && u.id!==me.id);
+  const pickerHTML=`
+  <div class="overlay" id="newChatOverlay" style="z-index:600;">
+    <div class="modal modal-wide">
+      <h3>New Message</h3>
+      <p class="modal-sub">Pick anyone to message — teachers, students, or admins.</p>
+      <input type="text" id="newChatSearch" placeholder="Search by name..." oninput="filterNewChatList()" style="margin-bottom:10px;">
+      <div id="newChatList" style="max-height:320px;overflow-y:auto;"></div>
+      <div class="modal-btns"><button class="btn btn-ghost" onclick="document.getElementById('newChatOverlay').remove()">Cancel</button></div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend',pickerHTML);
+  window._newChatUsers=others;
+  filterNewChatList();
+}
+function filterNewChatList(){
+  const q=(document.getElementById('newChatSearch')?.value||'').toLowerCase();
+  const list=(window._newChatUsers||[]).filter(u=>u.name.toLowerCase().includes(q));
+  const wrap=document.getElementById('newChatList');
+  if(!wrap) return;
+  wrap.innerHTML=list.length? list.map(u=>`<div class="item-card" style="cursor:pointer;margin-bottom:6px;" onclick="document.getElementById('newChatOverlay').remove();openChat('${u.id}')">
+    <div class="ic-title">${esc(u.name)} <span class="badge b-${u.role==='admin'?'admin':(u.role==='teacher'?'teacher':'student')}">${esc(u.role)}</span></div>
+  </div>`).join('') : '<div class="empty"><div class="e-sub">No matches</div></div>';
+}
+function openChat(otherUserId){
+  chatState.otherUserId=otherUserId;
+  if(chatState.msgUnsub){ chatState.msgUnsub(); chatState.msgUnsub=null; }
+  chatState.messages=[];
+  const other=userById(otherUserId);
+  const headerEl=document.getElementById('chatHeader');
+  if(headerEl) headerEl.innerHTML=esc(other?other.name:'Unknown user')+' <span style="font-weight:400;color:var(--ink4);font-size:.8rem;">('+esc(other?other.role:'')+')</span>';
+  const inputWrap=document.getElementById('chatInputWrap');
+  if(inputWrap) inputWrap.innerHTML=`<div style="display:flex;gap:8px;">
+    <input type="text" id="chatMsgInput" placeholder="Type a message..." style="flex:1;" onkeydown="if(event.key==='Enter')sendChatMessage()">
+    <button class="btn btn-primary" onclick="sendChatMessage()">Send</button>
+  </div>`;
+  const cid=convoId(currentProfile.id,otherUserId);
+  chatState.msgUnsub=dbFS.collection('messages').where('conversationId','==',cid).orderBy('createdAt','asc')
+    .onSnapshot(snap=>{
+      chatState.messages=snap.docs.map(d=>({id:d.id,...d.data()}));
+      renderChatMessages();
+    }, e=>toast('Sync error (chat): '+friendlyError(e),'error'));
+  renderConvoList();
+}
+function renderChatMessages(){
+  const wrap=document.getElementById('chatMessages');
+  if(!wrap) return;
+  if(!chatState.messages.length){ wrap.innerHTML='<div class="empty"><div class="e-icon">👋</div><div class="e-sub">Say hello \u2014 no messages yet.</div></div>'; return; }
+  const me=currentProfile.id;
+  wrap.innerHTML=chatState.messages.map(m=>{
+    const mine=m.senderId===me;
+    return `<div style="align-self:${mine?'flex-end':'flex-start'};max-width:70%;">
+      <div style="background:${mine?'var(--brand)':'var(--bg2,#f1f1f1)'};color:${mine?'#fff':'inherit'};padding:8px 12px;border-radius:12px;font-size:.86rem;line-height:1.4;white-space:pre-wrap;word-break:break-word;">${esc(m.text)}</div>
+      <div style="font-size:.68rem;color:var(--ink4);margin-top:2px;text-align:${mine?'right':'left'};">${fmtDate(m.createdAt)}</div>
+    </div>`;
+  }).join('');
+  wrap.scrollTop=wrap.scrollHeight;
+}
+async function sendChatMessage(){
+  const input=document.getElementById('chatMsgInput');
+  const text=input.value.trim();
+  if(!text || !chatState.otherUserId) return;
+  const me=currentProfile.id, other=chatState.otherUserId;
+  const cid=convoId(me,other);
+  input.value=''; input.disabled=true;
+  try{
+    await dbFS.collection('conversations').doc(cid).set({
+      participants:[me,other], lastMessage:text, lastMessageAt:nowISO(), createdAt:nowISO()
+    }, {merge:true});
+    await dbFS.collection('messages').add({
+      conversationId:cid, senderId:me, receiverId:other, text, createdAt:nowISO()
+    });
+  }catch(e){
+    toast('Failed to send: '+friendlyError(e),'error');
+    input.value=text;
+  }finally{
+    input.disabled=false; input.focus();
+  }
 }
 
 /* ============ INIT ============ */
