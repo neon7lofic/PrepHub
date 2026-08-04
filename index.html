@@ -522,7 +522,19 @@ function attachPrivateListeners(){
     DB.attempts=snap.docs.map(d=>({id:d.id,...d.data()}));
     refreshUI();
   }, e=>toast('Sync error (attempts): '+friendlyError(e),'error')));
-  privateListeners.push(dbFS.collection('tickets').onSnapshot(snap=>{
+  // The tickets rule allows a read either if you're an admin, or if it's your
+  // OWN ticket (resource.data.userId == your uid). Firestore can only allow an
+  // unfiltered list() query when the rule can be proven safe purely from what
+  // the query itself constrains — for a non-admin, "is it my own ticket" isn't
+  // something an unfiltered query can prove, so listening to the whole
+  // collection with no filter got rejected with permission-denied for every
+  // teacher/student (admins "worked" only because isAdmin() alone doesn't
+  // depend on resource data). Query the right thing for each role instead:
+  // admins listen to everything, everyone else only to their own tickets.
+  const ticketsQuery = (currentProfile.role==='admin')
+    ? dbFS.collection('tickets')
+    : dbFS.collection('tickets').where('userId','==',currentProfile.id);
+  privateListeners.push(ticketsQuery.onSnapshot(snap=>{
     DB.tickets=snap.docs.map(d=>({id:d.id,...d.data()}));
     buildNav();
     // 'support' and 'supporttickets' sit in refreshUI's skip list (a full page
