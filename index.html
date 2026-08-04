@@ -524,7 +524,22 @@ function attachPrivateListeners(){
   }, e=>toast('Sync error (attempts): '+friendlyError(e),'error')));
   privateListeners.push(dbFS.collection('tickets').onSnapshot(snap=>{
     DB.tickets=snap.docs.map(d=>({id:d.id,...d.data()}));
-    refreshUI();
+    buildNav();
+    // 'support' and 'supporttickets' sit in refreshUI's skip list (a full page
+    // re-render there would blank out whatever reply someone is mid-typing), so
+    // patch just the ticket list/cards directly instead, same pattern as messages.
+    if(uiState.page==='support'){
+      const u=currentUser();
+      const wrap=document.getElementById('myTicketsWrap');
+      if(u && wrap){
+        const myTickets=[...DB.tickets].filter(t=>t.userId===u.id).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+        wrap.innerHTML = myTickets.length? myTickets.map(t=>myTicketCardHTML(t)).join('') : '<div class="empty"><div class="e-icon">🗂️</div><div class="e-title">No queries yet</div><div class="e-sub">Anything you raise will show up here.</div></div>';
+      }
+    } else if(uiState.page==='supporttickets'){
+      if(document.getElementById('ticketsList')) renderTicketsList();
+    } else {
+      refreshUI();
+    }
   }, e=>toast('Sync error (tickets): '+friendlyError(e),'error')));
   privateListeners.push(dbFS.collection('conversations').where('participants','array-contains',currentProfile.id).onSnapshot(snap=>{
     DB.conversations=snap.docs.map(d=>({id:d.id,...d.data()}));
@@ -552,7 +567,7 @@ function detachPrivateListeners(){
 function refreshUI(){
   if(!currentProfile) return;
   buildNav();
-  const skipAutoRerender=['createtest','edittest','testrunner','messages'];
+  const skipAutoRerender=['createtest','edittest','testrunner','messages','support','supporttickets'];
   if(!skipAutoRerender.includes(uiState.page)) render();
 }
 
@@ -1962,7 +1977,7 @@ async function submitPublicTicket(){
   const btn=document.getElementById('hsSubmitBtn');
   if(btn){btn.disabled=true; btn.textContent='Submitting...';}
   const ticketNo=genTicketNo();
-  const data={ticketNo,userId:null,name,email,phone,category,subject,message,status:'Open',reply:'',repliedAt:null,createdAt:nowISO()};
+  const data={ticketNo,userId:null,name,email,phone,category,subject,message,status:'Open',thread:[],createdAt:nowISO()};
   try{
     await dbFS.collection('tickets').doc(ticketNo).set(data);
     document.getElementById('hsTicketNo').textContent=ticketNo;
@@ -1980,10 +1995,29 @@ function hsGoTrackJustSubmitted(){
   document.getElementById('hsTrackInput').value=tn;
   trackPublicTicket();
 }
+// Shared thread renderer — used by the public tracker, the logged-in "My Queries"
+// list, and the admin ticket console, so every reply anyone sends looks the same
+// everywhere and is easy to follow chronologically.
+function ticketThreadHTML(t){
+  const thread=t.thread||[];
+  if(!thread.length) return '<p class="modal-sub" style="margin-top:10px;">No replies yet.</p>';
+  return '<div style="margin-top:10px;display:flex;flex-direction:column;gap:8px;">'+thread.map(m=>{
+    const isAdmin=m.who==='admin';
+    return `<div style="align-self:${isAdmin?'flex-start':'flex-end'};max-width:88%;">
+      <div class="ticket-reply-box" style="margin-top:0;${isAdmin?'':'background:var(--blue-lt);border-left-color:var(--blue);'}">
+        <strong>${isAdmin?'🛡️ Admin':'💬 '+esc(m.name||'You')}:</strong> ${esc(m.text)}
+        <div style="font-size:.68rem;color:var(--ink4);margin-top:4px;">${fmtDate(m.at)}</div>
+      </div>
+    </div>`;
+  }).join('')+'</div>';
+}
 async function trackPublicTicket(){
   const raw=document.getElementById('hsTrackInput').value.trim().toUpperCase();
-  const resultEl=document.getElementById('hsTrackResult');
   if(!raw){toast('Enter a ticket number','error');return;}
+  await doTrackTicket(raw);
+}
+async function doTrackTicket(raw){
+  const resultEl=document.getElementById('hsTrackResult');
   resultEl.innerHTML='<p class="modal-sub">Searching…</p>';
   try{
     const doc=await dbFS.collection('tickets').doc(raw).get();
@@ -1993,14 +2027,33 @@ async function trackPublicTicket(){
     }
     const t=doc.data();
     const statusClass=t.status==='Open'?'b-open':(t.status==='In Progress'?'b-inprogress':'b-resolved');
+    const canReply = t.userId==null; // anonymous ticket — the tracker is only for those; logged-in owners reply from Help & Support instead
     resultEl.innerHTML=`<div class="item-card" style="margin-top:14px;">
       <div class="ic-title">${esc(t.subject)} <span class="badge b-teacher">${esc(t.category)}</span> <span class="badge ${statusClass}">${t.status}</span></div>
       <div class="ic-meta"><span>🕒 ${fmtDate(t.createdAt)}</span></div>
       <div style="font-size:.82rem;color:var(--ink2);margin-top:8px;line-height:1.6;">${esc(t.message)}</div>
-      ${t.reply? '<div class="ticket-reply-box"><strong>Admin reply:</strong> '+esc(t.reply)+'<div style="font-size:.7rem;color:var(--ink4);margin-top:4px;">'+fmtDate(t.repliedAt)+'</div></div>' : '<p class="modal-sub" style="margin-top:10px;">No reply yet — check back soon.</p>'}
+      ${ticketThreadHTML(t)}
+      ${canReply?`<div style="display:flex;gap:8px;margin-top:12px;">
+        <input type="text" id="hsReplyInput" placeholder="Write a reply..." style="flex:1;" onkeydown="if(event.key==='Enter')sendPublicTicketReply('${raw}','${esc(t.name).replace(/'/g,"&#39;")}')">
+        <button class="btn btn-primary btn-sm" onclick="sendPublicTicketReply('${raw}','${esc(t.name).replace(/'/g,"&#39;")}')">Send</button>
+      </div>`:''}
     </div>`;
   }catch(e){
     resultEl.innerHTML='<div class="empty"><div class="e-icon">⚠️</div><div class="e-title">Could not fetch</div><div class="e-sub">'+esc(friendlyError(e))+'</div></div>';
+  }
+}
+async function sendPublicTicketReply(ticketNo,name){
+  const input=document.getElementById('hsReplyInput');
+  const text=input.value.trim();
+  if(!text) return;
+  input.disabled=true;
+  const entry={who:'user',name,text,at:nowISO()};
+  try{
+    await dbFS.collection('tickets').doc(ticketNo).update({thread:firebase.firestore.FieldValue.arrayUnion(entry)});
+    await doTrackTicket(ticketNo);
+  }catch(e){
+    toast('Failed to send reply: '+friendlyError(e),'error');
+    input.disabled=false;
   }
 }
 
@@ -2012,7 +2065,7 @@ function renderSupport(c){
   const u=currentUser();
   const myTickets=[...DB.tickets].filter(t=>t.userId===u.id).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   c.innerHTML=`
-  <div class="page-header"><h2>Help &amp; Support</h2><p>Raise a query or report an issue — the admin will review and reply here.</p></div>
+  <div class="page-header"><h2>Help &amp; Support</h2><p>Raise a query or report an issue — reply back and forth with the admin right here.</p></div>
   <div class="g2" style="align-items:flex-start;">
     <div class="card">
       <div class="card-header"><h3>📨 Raise a New Query</h3></div>
@@ -2039,13 +2092,30 @@ function myTicketCardHTML(t){
   const statusClass=t.status==='Open'?'b-open':(t.status==='In Progress'?'b-inprogress':'b-resolved');
   return `<div class="item-card">
     <div class="ic-top">
-      <div><div class="ic-title">${esc(t.subject)} <span class="badge b-teacher">${esc(t.category)}</span> <span class="badge ${statusClass}">${t.status}</span></div>
+      <div style="width:100%;"><div class="ic-title">${esc(t.subject)} <span class="badge b-teacher">${esc(t.category)}</span> <span class="badge ${statusClass}">${t.status}</span></div>
       <div class="ic-meta"><span>🎫 ${esc(t.ticketNo||t.id)}</span><span>🕒 ${fmtDate(t.createdAt)}</span></div>
       <div style="font-size:.82rem;color:var(--ink2);margin-top:8px;line-height:1.6;">${esc(t.message)}</div>
-      ${t.reply? '<div class="ticket-reply-box"><strong>Admin reply:</strong> '+esc(t.reply)+'<div style="font-size:.7rem;color:var(--ink4);margin-top:4px;">'+fmtDate(t.repliedAt)+'</div></div>' : ''}
+      ${ticketThreadHTML(t)}
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <input type="text" id="myReplyInput_${t.id}" placeholder="Write a reply..." style="flex:1;" onkeydown="if(event.key==='Enter')sendMyTicketReply('${t.id}')">
+        <button class="btn btn-primary btn-sm" onclick="sendMyTicketReply('${t.id}')">Send</button>
+      </div>
       </div>
     </div>
   </div>`;
+}
+async function sendMyTicketReply(id){
+  const input=document.getElementById('myReplyInput_'+id);
+  const text=input.value.trim();
+  if(!text) return;
+  const u=currentUser();
+  const entry={who:'user',name:u.name,text,at:nowISO()};
+  input.disabled=true;
+  try{
+    await dbFS.collection('tickets').doc(id).update({thread:firebase.firestore.FieldValue.arrayUnion(entry)});
+    input.value='';
+  }catch(e){ toast('Failed to send reply: '+friendlyError(e),'error'); }
+  finally{ input.disabled=false; }
 }
 async function submitTicket(){
   const category=document.getElementById('tkCategory').value;
@@ -2054,7 +2124,7 @@ async function submitTicket(){
   if(!subject||!message){toast('Please fill in subject and message','error');return;}
   const u=currentUser();
   const ticketNo=genTicketNo();
-  const data={ticketNo,userId:u.id,name:u.name,email:u.email,phone:u.phone||'',category,subject,message,status:'Open',reply:'',repliedAt:null,createdAt:nowISO()};
+  const data={ticketNo,userId:u.id,name:u.name,email:u.email,phone:u.phone||'',category,subject,message,status:'Open',thread:[],createdAt:nowISO()};
   try{
     await dbFS.collection('tickets').doc(ticketNo).set(data);
     localUpsert('tickets',ticketNo,data);
@@ -2143,33 +2213,42 @@ function adminTicketCardHTML(t){
         </div>
         ${contactLine}
         <div style="font-size:.82rem;color:var(--ink2);margin-top:8px;line-height:1.6;">${esc(t.message)}</div>
-        ${t.reply? '<div class="ticket-reply-box"><strong>Your reply:</strong> '+esc(t.reply)+'<div style="font-size:.7rem;color:var(--ink4);margin-top:4px;">'+fmtDate(t.repliedAt)+'</div></div>' : ''}
+        ${ticketThreadHTML(t)}
       </div>
     </div>
     <div class="ic-actions">
-      <select id="statusSel_${t.id}" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.77rem;">
+      <select id="statusSel_${t.id}" onchange="updateTicketStatus('${t.id}')" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.77rem;">
         <option value="Open" ${t.status==='Open'?'selected':''}>Open</option>
         <option value="In Progress" ${t.status==='In Progress'?'selected':''}>In Progress</option>
         <option value="Resolved" ${t.status==='Resolved'?'selected':''}>Resolved</option>
       </select>
-      <input type="text" id="replyInput_${t.id}" placeholder="Write a reply..." style="flex:1;min-width:160px;padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.8rem;" value="${esc(t.reply||'')}">
+      <input type="text" id="replyInput_${t.id}" placeholder="Write a reply..." style="flex:1;min-width:160px;padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.8rem;" onkeydown="if(event.key==='Enter')replyTicket('${t.id}')">
       <button class="btn btn-primary btn-xs" onclick="replyTicket('${t.id}')">📨 Send Reply</button>
       <button class="btn btn-danger btn-xs" onclick="deleteTicket('${t.id}')">🗑 Delete</button>
     </div>
   </div>`;
 }
-async function replyTicket(id){
+async function updateTicketStatus(id){
   const status=document.getElementById('statusSel_'+id).value;
-  const reply=document.getElementById('replyInput_'+id).value.trim();
-  const patch={status};
-  if(reply){patch.reply=reply; patch.repliedAt=nowISO();}
   try{
-    await dbFS.collection('tickets').doc(id).update(patch);
-    localUpdate('tickets',id,patch);
-    toast('Ticket updated','success');
+    await dbFS.collection('tickets').doc(id).update({status});
+    localUpdate('tickets',id,{status});
+    toast('Status updated to '+status,'success');
     buildNav();
-    renderTicketsList();
-  }catch(e){ toast('Failed to update: '+friendlyError(e),'error'); }
+  }catch(e){ toast('Failed to update status: '+friendlyError(e),'error'); }
+}
+async function replyTicket(id){
+  const input=document.getElementById('replyInput_'+id);
+  const text=input.value.trim();
+  if(!text){toast('Write a reply first','error');return;}
+  const entry={who:'admin',name:'Admin',text,at:nowISO()};
+  input.disabled=true;
+  try{
+    await dbFS.collection('tickets').doc(id).update({thread:firebase.firestore.FieldValue.arrayUnion(entry)});
+    input.value='';
+    toast('Reply sent','success');
+  }catch(e){ toast('Failed to reply: '+friendlyError(e),'error'); }
+  finally{ input.disabled=false; }
 }
 
 /* ============ MESSAGES: direct 1:1, plus group & class chats ============
@@ -2391,9 +2470,13 @@ function openChat(otherUserId){
   if(headerEl) headerEl.innerHTML='<span>'+esc(other?other.name:'Unknown user')+' <span style="font-weight:400;color:var(--ink4);font-size:.8rem;">('+esc(other?other.role:'')+')</span></span>';
   renderChatInput();
   const cid=convoId(currentProfile.id,otherUserId);
-  chatState.msgUnsub=dbFS.collection('messages').where('conversationId','==',cid).orderBy('createdAt','asc')
+  // No orderBy here on purpose: an equality filter (conversationId) combined with
+  // orderBy on a DIFFERENT field (createdAt) requires a Firestore composite index
+  // to be created in the console first, and fails with "query requires an index"
+  // until you do. Sorting client-side avoids needing any index setup at all.
+  chatState.msgUnsub=dbFS.collection('messages').where('conversationId','==',cid)
     .onSnapshot(snap=>{
-      chatState.messages=snap.docs.map(d=>({id:d.id,...d.data()}));
+      chatState.messages=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
       renderChatMessages();
     }, e=>toast('Sync error (chat): '+friendlyError(e),'error'));
   renderConvoList();
@@ -2413,9 +2496,9 @@ function openGroupChat(groupId){
   if(headerEl) headerEl.innerHTML='<span>'+(g&&g.type==='class'?'🏷️ ':'👥 ')+esc(g?g.name:'Unknown group')+' <span style="font-weight:400;color:var(--ink4);font-size:.8rem;">('+(g?g.participants.length:0)+' members)</span></span>'+
     (canDelete?'<button class="btn btn-danger btn-xs" onclick="deleteGroupChat(\''+groupId+'\')">🗑 Delete Group</button>':'');
   renderChatInput();
-  chatState.groupMsgUnsub=dbFS.collection('groupMessages').where('groupId','==',groupId).orderBy('createdAt','asc')
+  chatState.groupMsgUnsub=dbFS.collection('groupMessages').where('groupId','==',groupId)
     .onSnapshot(snap=>{
-      chatState.groupMessages=snap.docs.map(d=>({id:d.id,...d.data()}));
+      chatState.groupMessages=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
       renderChatMessages();
     }, e=>toast('Sync error (group chat): '+friendlyError(e),'error'));
   renderGroupList();
