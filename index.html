@@ -450,7 +450,7 @@ auth.setPersistence(firebase.auth.Auth.Persistence.SESSION).catch(()=>{});
    All the render functions below still read DB.users / DB.tests / etc. synchronously
    exactly like before — only the write path (create/update/delete) goes through Firestore.
 */
-let DB={users:[],schools:[],classes:[],tests:[],attempts:[],tickets:[],conversations:[],groupChats:[]};
+let DB={users:[],schools:[],classes:[],tests:[],attempts:[],tickets:[],conversations:[],groupChats:[],groupInvites:[]};
 let currentProfile=null;
 let uiState={sidebarCollapsed:false, page:'dashboard', pageParams:{}};
 let privateListeners=[], publicListeners=[];
@@ -553,12 +553,22 @@ function attachPrivateListeners(){
     DB.groupChats=snap.docs.map(d=>({id:d.id,...d.data()}));
     if(uiState.page==='messages') renderGroupList();
   }, e=>toast('Sync error (groups): '+friendlyError(e),'error')));
+  // Groups I've been invited to but haven't accepted/declined yet — a separate
+  // query since it's keyed off a different array field (`invites`, not
+  // `participants`). Nobody is ever dropped straight into a group's member
+  // list; this is what lets them see the invite and accept or decline it.
+  privateListeners.push(dbFS.collection('groupChats').where('invites','array-contains',currentProfile.id).onSnapshot(snap=>{
+    DB.groupInvites=snap.docs.map(d=>({id:d.id,...d.data()}));
+    buildNav();
+    if(uiState.page==='messages') renderGroupList();
+  }, e=>toast('Sync error (group invites): '+friendlyError(e),'error')));
 }
 function detachPrivateListeners(){
   privateListeners.forEach(u=>u()); privateListeners=[];
   if(chatState.msgUnsub){ chatState.msgUnsub(); chatState.msgUnsub=null; }
   chatState.otherUserId=null; chatState.messages=[];
   chatState.mode='direct'; chatState.groupId=null; chatState.groupMessages=[];
+  DB.groupInvites=[];
 }
 
 // Re-renders the nav (badges) and, when it's safe to do so, the current page.
@@ -618,7 +628,7 @@ auth.onAuthStateChanged(async (user)=>{
   if(!user){
     currentProfile=null;
     detachPrivateListeners();
-    DB.users=[];DB.tests=[];DB.attempts=[];DB.tickets=[];DB.groupChats=[];
+    DB.users=[];DB.tests=[];DB.attempts=[];DB.tickets=[];DB.groupChats=[];DB.groupInvites=[];
     document.getElementById('shell').classList.remove('show');
     document.getElementById('authScreen').style.display='flex';
     return;
@@ -794,6 +804,7 @@ function enterApp(){
 function buildNav(){
   const u=currentUser();
   const pendingCount=DB.users.filter(x=>x.status==='pending').length;
+  const inviteCount=(DB.groupInvites||[]).length;
   let items=[];
   if(u.role==='admin'){
     items=[
@@ -808,7 +819,7 @@ function buildNav(){
       {p:'analytics',icon:'📈',label:'Analytics'},
       {sec:'Support'},
       {p:'supporttickets',icon:'🆘',label:'Support Tickets',badge:openTicketCount()||null},
-      {p:'messages',icon:'💬',label:'Messages'},
+      {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
       {sec:''},
       {p:'profile',icon:'⚙️',label:'My Profile'}
     ];
@@ -822,7 +833,7 @@ function buildNav(){
       {p:'analytics',icon:'📈',label:'Analytics'},
       {sec:'Support'},
       {p:'support',icon:'🆘',label:'Help & Support'},
-      {p:'messages',icon:'💬',label:'Messages'},
+      {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
       {sec:''},
       {p:'profile',icon:'⚙️',label:'My Profile'}
     ];
@@ -836,7 +847,7 @@ function buildNav(){
       {p:'analytics',icon:'📈',label:'My Analytics'},
       {sec:'Support'},
       {p:'support',icon:'🆘',label:'Help & Support'},
-      {p:'messages',icon:'💬',label:'Messages'},
+      {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
       {sec:''},
       {p:'profile',icon:'⚙️',label:'My Profile'}
     ];
@@ -1438,11 +1449,19 @@ function viewAttemptReview(testId){
 }
 
 /* ============ STUDENT: AVAILABLE TESTS ============ */
+function allPublishedTests(){ return DB.tests.filter(t=>t.published); }
 function renderAvailableTests(c){
   const u=currentUser();
-  const avail=availableTestsFor(u);
+  if(!window._availScope) window._availScope='mine'; // 'mine' | 'all'
   c.innerHTML=`<div class="page-header"><h2>Available Tests</h2><p>Tests and DPPs assigned to ${esc(className(u.cls))}, ${esc(schoolName(u.school))}.</p></div>
+  <div class="page-toolbar">
+    <select id="availScopeSel" onchange="window._availScope=this.value;renderAvailableTests(document.getElementById('content'))" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">
+      <option value="mine" ${window._availScope==='mine'?'selected':''}>My Class Only</option>
+      <option value="all" ${window._availScope==='all'?'selected':''}>All Tests (every class)</option>
+    </select>
+  </div>
   <div id="availList"></div>`;
+  const avail = window._availScope==='all' ? allPublishedTests() : availableTestsFor(u);
   document.getElementById('availList').innerHTML = avail.length? [...avail].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(t=>studentTestCard(t)).join('') : '<div class="empty"><div class="e-icon">📭</div><div class="e-title">No tests assigned yet</div></div>';
 }
 
@@ -1950,6 +1969,26 @@ function genTicketNo(){
   let s=''; for(let i=0;i<6;i++) s+=chars[Math.floor(Math.random()*chars.length)];
   return 'PH-'+s;
 }
+// Ticket numbers are random and used as the Firestore document ID. Previously
+// nothing checked whether a freshly-generated number already belonged to an
+// existing ticket before writing to it with .set() — an (unlikely, but real)
+// collision would have silently overwritten someone else's ticket with no
+// error shown to anyone. This generates a number, checks it's actually free,
+// and retries with a new one on the rare collision instead of failing silently.
+async function genUniqueTicketNo(){
+  for(let attempt=0; attempt<8; attempt++){
+    const candidate=genTicketNo();
+    try{
+      const doc=await dbFS.collection('tickets').doc(candidate).get();
+      if(!doc.exists) return candidate;
+    }catch(e){
+      // couldn't verify uniqueness (e.g. offline) — surface it rather than
+      // silently proceeding with an unverified ticket number
+      throw e;
+    }
+  }
+  throw new Error('Could not generate a unique ticket number — please try again.');
+}
 function openHelpSupport(tab){
   document.getElementById('helpSupportOverlay').classList.remove('hidden');
   document.getElementById('hsSubmitForm').style.display='block';
@@ -1976,9 +2015,9 @@ async function submitPublicTicket(){
   if(!name||!email||!subject||!message){toast('Please fill in all required fields','error');return;}
   const btn=document.getElementById('hsSubmitBtn');
   if(btn){btn.disabled=true; btn.textContent='Submitting...';}
-  const ticketNo=genTicketNo();
-  const data={ticketNo,userId:null,name,email,phone,category,subject,message,status:'Open',thread:[],createdAt:nowISO()};
   try{
+    const ticketNo=await genUniqueTicketNo();
+    const data={ticketNo,userId:null,name,email,phone,category,subject,message,status:'Open',thread:[],createdAt:nowISO()};
     await dbFS.collection('tickets').doc(ticketNo).set(data);
     document.getElementById('hsTicketNo').textContent=ticketNo;
     document.getElementById('hsSubmitForm').style.display='none';
@@ -2123,9 +2162,9 @@ async function submitTicket(){
   const message=document.getElementById('tkMessage').value.trim();
   if(!subject||!message){toast('Please fill in subject and message','error');return;}
   const u=currentUser();
-  const ticketNo=genTicketNo();
-  const data={ticketNo,userId:u.id,name:u.name,email:u.email,phone:u.phone||'',category,subject,message,status:'Open',thread:[],createdAt:nowISO()};
   try{
+    const ticketNo=await genUniqueTicketNo();
+    const data={ticketNo,userId:u.id,name:u.name,email:u.email,phone:u.phone||'',category,subject,message,status:'Open',thread:[],createdAt:nowISO()};
     await dbFS.collection('tickets').doc(ticketNo).set(data);
     localUpsert('tickets',ticketNo,data);
     toast('Query submitted (ticket '+ticketNo+') — admin will respond soon','success');
@@ -2320,18 +2359,53 @@ function renderConvoList(){
 function renderGroupList(){
   const wrap=document.getElementById('groupListWrap');
   if(!wrap) return;
+  const invites=[...(DB.groupInvites||[])].sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  const invitesHTML = invites.length ? `<div style="padding:10px 14px 4px;font-size:.7rem;font-weight:700;color:var(--ink4);text-transform:uppercase;letter-spacing:.03em;">Group Invites (${invites.length})</div>` +
+    invites.map(g=>{
+      const inviter=userById(g.createdBy);
+      return `<div class="item-card" style="margin:6px 10px;">
+        <div class="ic-title" style="font-size:.85rem;">${g.type==='class'?'🏷️':'👥'} ${esc(g.name)}</div>
+        <div style="font-size:.72rem;color:var(--ink4);margin:2px 0 8px;">Invited by ${esc(inviter?inviter.name:'someone')} · ${g.participants.length} member(s)</div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-primary btn-xs" onclick="acceptGroupInvite('${g.id}')">✓ Accept</button>
+          <button class="btn btn-ghost btn-xs" onclick="declineGroupInvite('${g.id}')">✕ Decline</button>
+        </div>
+      </div>`;
+    }).join('') + '<div style="border-bottom:1.5px solid var(--border);margin:4px 0 6px;"></div>'
+    : '';
   const sorted=[...DB.groupChats].sort((a,b)=>new Date(b.lastMessageAt||b.createdAt||0)-new Date(a.lastMessageAt||a.createdAt||0));
-  if(!sorted.length){ wrap.innerHTML='<div class="empty" style="padding:20px;"><div class="e-icon">👥</div><div class="e-sub">No group or class chats yet</div></div>'; return; }
-  wrap.innerHTML=sorted.map(g=>{
+  if(!sorted.length && !invites.length){ wrap.innerHTML='<div class="empty" style="padding:20px;"><div class="e-icon">👥</div><div class="e-sub">No group or class chats yet</div></div>'; return; }
+  const listHTML = sorted.length ? sorted.map(g=>{
     const active=chatState.mode==='group' && chatState.groupId===g.id;
+    const amAdmin=(g.admins||[]).includes(currentProfile.id);
     return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;${active?'background:var(--brand-lt);':''}" onclick="openGroupChat('${g.id}')">
       <div style="width:32px;height:32px;flex-shrink:0;border-radius:9px;background:var(--purple);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;">${g.type==='class'?'🏷️':'👥'}</div>
       <div style="overflow:hidden;">
-        <div style="font-weight:600;font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(g.name)} <span style="font-weight:400;color:var(--ink4);font-size:.7rem;">(${g.participants.length})</span></div>
+        <div style="font-weight:600;font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(g.name)} <span style="font-weight:400;color:var(--ink4);font-size:.7rem;">(${g.participants.length})</span>${amAdmin?' <span class="badge b-admin" style="font-size:.6rem;">admin</span>':''}</div>
         <div style="font-size:.74rem;color:var(--ink4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(g.lastMessage||'No messages yet')}</div>
       </div>
     </div>`;
-  }).join('');
+  }).join('') : (invites.length?'':'<div class="empty" style="padding:20px;"><div class="e-icon">👥</div><div class="e-sub">No group or class chats yet</div></div>');
+  wrap.innerHTML=invitesHTML+listHTML;
+}
+async function acceptGroupInvite(id){
+  const g=(DB.groupInvites||[]).find(x=>x.id===id); if(!g) return;
+  const me=currentProfile.id;
+  try{
+    await dbFS.collection('groupChats').doc(id).update({
+      participants: firebase.firestore.FieldValue.arrayUnion(me),
+      invites: firebase.firestore.FieldValue.arrayRemove(me)
+    });
+    toast('Joined "'+g.name+'"','success');
+    msgsTab='groups'; render(); openGroupChat(id);
+  }catch(e){ toast('Failed to join group: '+friendlyError(e),'error'); }
+}
+async function declineGroupInvite(id){
+  const me=currentProfile.id;
+  try{
+    await dbFS.collection('groupChats').doc(id).update({invites: firebase.firestore.FieldValue.arrayRemove(me)});
+    toast('Invite declined','success');
+  }catch(e){ toast('Failed to decline invite: '+friendlyError(e),'error'); }
 }
 function openNewChatPicker(){
   const me=currentUser();
@@ -2371,17 +2445,17 @@ function openNewGroupModal(){
   <div class="overlay" id="newGroupOverlay" style="z-index:600;">
     <div class="modal modal-wide">
       <h3>New Group Chat</h3>
-      <p class="modal-sub">Create a custom group, or auto-fill a group with everyone in a class.</p>
+      <p class="modal-sub">Create a custom group, or auto-pick everyone in a class. You'll be the group's admin — everyone you add gets an <strong>invite</strong> and only joins once they accept, nobody is added without their say-so.</p>
       <div class="field"><label>Group Name <span class="req">*</span></label><input type="text" id="ngName" placeholder="e.g. JEE Batch A Doubts"></div>
-      <div class="field"><label>Auto-add from Class (optional)</label><select id="ngClass" onchange="ngApplyClassPick()">${classOpts}</select></div>
-      <div class="field"><label>Members</label>
+      <div class="field"><label>Auto-invite from Class (optional)</label><select id="ngClass" onchange="ngApplyClassPick()">${classOpts}</select></div>
+      <div class="field"><label>Members to Invite</label>
         <input type="text" id="ngMemberSearch" placeholder="Search by name to add manually..." oninput="renderNgMemberList()">
       </div>
       <div id="ngMemberList" style="max-height:220px;overflow-y:auto;border:1.5px solid var(--border);border-radius:8px;padding:6px;"></div>
       <div id="ngSelectedWrap" style="margin-top:10px;"></div>
       <div class="modal-btns">
         <button class="btn btn-ghost" onclick="document.getElementById('newGroupOverlay').remove()">Cancel</button>
-        <button class="btn btn-primary" onclick="createGroupChat()">Create Group</button>
+        <button class="btn btn-primary" onclick="createGroupChat()">Create &amp; Send Invites</button>
       </div>
     </div>
   </div>`;
@@ -2430,18 +2504,19 @@ function renderNgSelected(){
 }
 async function createGroupChat(){
   const name=document.getElementById('ngName').value.trim();
-  const members=[...window._ngSelected];
+  const invitees=[...window._ngSelected].filter(id=>id!==currentProfile.id);
   if(!name){toast('Enter a group name','error');return;}
-  if(!members.length){toast('Add at least one member','error');return;}
+  if(!invitees.length){toast('Pick at least one person to invite','error');return;}
   const me=currentProfile.id;
-  const participants=[...new Set([me,...members])];
-  if(participants.length<2){toast('A group needs at least 2 members','error');return;}
   const id=uid('grp');
-  const data={name,type:window._ngIsClass?'class':'group',participants,createdBy:me,createdAt:nowISO(),lastMessage:'',lastMessageAt:nowISO()};
+  // Only the creator is seated as a participant (and admin) right away — everyone
+  // else lands in `invites` and only becomes a member once THEY accept, so nobody
+  // gets forced into a group.
+  const data={name,type:window._ngIsClass?'class':'group',participants:[me],invites:invitees,admins:[me],createdBy:me,createdAt:nowISO(),lastMessage:'',lastMessageAt:nowISO()};
   try{
     await dbFS.collection('groupChats').doc(id).set(data);
     document.getElementById('newGroupOverlay').remove();
-    toast('Group created','success');
+    toast('Group created — invite'+(invitees.length>1?'s':'')+' sent to '+invitees.length+' member(s)','success');
     msgsTab='groups'; render();
     openGroupChat(id);
   }catch(e){ toast('Failed to create group: '+friendlyError(e),'error'); }
@@ -2455,6 +2530,32 @@ function deleteGroupChat(id){
       render();
     }catch(e){ toast('Failed to delete group: '+friendlyError(e),'error'); }
   },'Delete');
+}
+// ---- Leave a group (any member can leave; if the last admin leaves, everyone
+// still in the group is auto-promoted so it's never left admin-less/stuck) ----
+function leaveGroupChat(id){
+  const g=DB.groupChats.find(x=>x.id===id); if(!g) return;
+  openConfirm('Leave "'+g.name+'"?','You will stop receiving messages from this group unless someone invites you back.',async()=>{
+    const me=currentProfile.id;
+    const remaining=(g.participants||[]).filter(p=>p!==me);
+    try{
+      if(!remaining.length){
+        // last person in the group leaving — just remove the group entirely
+        await dbFS.collection('groupChats').doc(id).delete();
+      } else {
+        const adminsMinusMe=(g.admins||[]).filter(a=>a!==me);
+        const newAdmins = adminsMinusMe.length ? adminsMinusMe : remaining.slice();
+        await dbFS.collection('groupChats').doc(id).update({
+          participants: firebase.firestore.FieldValue.arrayRemove(me),
+          admins: newAdmins
+        });
+      }
+      if(chatState.groupId===id){ chatState.mode='direct'; chatState.groupId=null; if(chatState.groupMsgUnsub){chatState.groupMsgUnsub();chatState.groupMsgUnsub=null;} }
+      const ov=document.getElementById('groupSettingsOverlay'); if(ov) ov.remove();
+      toast('You left the group','success');
+      render();
+    }catch(e){ toast('Failed to leave group: '+friendlyError(e),'error'); }
+  },'Leave');
 }
 
 /* ---- Direct chat ---- */
@@ -2492,9 +2593,8 @@ function openGroupChat(groupId){
   chatState.groupMessages=[];
   const g=DB.groupChats.find(x=>x.id===groupId);
   const headerEl=document.getElementById('chatHeader');
-  const canDelete = g && (isCurrentUserAdmin() || g.createdBy===currentProfile.id);
   if(headerEl) headerEl.innerHTML='<span>'+(g&&g.type==='class'?'🏷️ ':'👥 ')+esc(g?g.name:'Unknown group')+' <span style="font-weight:400;color:var(--ink4);font-size:.8rem;">('+(g?g.participants.length:0)+' members)</span></span>'+
-    (canDelete?'<button class="btn btn-danger btn-xs" onclick="deleteGroupChat(\''+groupId+'\')">🗑 Delete Group</button>':'');
+    (g?'<button class="btn btn-ghost btn-xs" onclick="openGroupSettings(\''+groupId+'\')">⚙️ Group Info</button>':'');
   renderChatInput();
   chatState.groupMsgUnsub=dbFS.collection('groupMessages').where('groupId','==',groupId)
     .onSnapshot(snap=>{
@@ -2504,6 +2604,140 @@ function openGroupChat(groupId){
   renderGroupList();
 }
 function isCurrentUserAdmin(){ const u=currentUser(); return u&&u.role==='admin'; }
+
+/* ---- Group Info / Settings modal (WhatsApp-style: admin-only controls) ---- */
+function openGroupSettings(groupId){
+  const g=DB.groupChats.find(x=>x.id===groupId); if(!g) return;
+  const me=currentProfile.id;
+  const amAdmin=(g.admins||[]).includes(me) || isCurrentUserAdmin();
+  const html=`
+  <div class="overlay" id="groupSettingsOverlay" style="z-index:600;">
+    <div class="modal modal-wide">
+      <h3>${g.type==='class'?'🏷️':'👥'} Group Info</h3>
+      ${amAdmin?`<div class="field"><label>Group Name</label>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="gsName" value="${esc(g.name)}" style="flex:1;">
+          <button class="btn btn-primary btn-sm" onclick="renameGroupChat('${groupId}')">Save</button>
+        </div>
+      </div>`:`<p class="modal-sub">${esc(g.name)}</p>`}
+      <div class="field"><label>Members (${g.participants.length})</label>
+        <div id="gsMemberList" style="max-height:180px;overflow-y:auto;border:1.5px solid var(--border);border-radius:8px;padding:6px;"></div>
+      </div>
+      ${amAdmin?`
+      <div class="field"><label>Pending Invites (${(g.invites||[]).length})</label>
+        <div id="gsInviteList" style="max-height:120px;overflow-y:auto;border:1.5px solid var(--border);border-radius:8px;padding:6px;"></div>
+      </div>
+      <div class="field"><label>Invite More People</label>
+        <input type="text" id="gsAddSearch" placeholder="Search by name..." oninput="renderGsAddList('${groupId}')">
+        <div id="gsAddList" style="max-height:140px;overflow-y:auto;margin-top:6px;"></div>
+      </div>`:''}
+      <div class="modal-btns" style="flex-wrap:wrap;">
+        ${amAdmin?'<button class="btn btn-danger" onclick="document.getElementById(\'groupSettingsOverlay\').remove();deleteGroupChat(\''+groupId+'\')">🗑 Delete Group</button>':''}
+        <button class="btn btn-danger" style="margin-left:auto;" onclick="leaveGroupChat('${groupId}')">🚪 Leave Group</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('groupSettingsOverlay').remove()">Close</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+  renderGsMemberList(groupId);
+  if(amAdmin){ renderGsInviteList(groupId); renderGsAddList(groupId); }
+}
+function renderGsMemberList(groupId){
+  const wrap=document.getElementById('gsMemberList'); if(!wrap) return;
+  const g=DB.groupChats.find(x=>x.id===groupId); if(!g) return;
+  const me=currentProfile.id;
+  const amAdmin=(g.admins||[]).includes(me) || isCurrentUserAdmin();
+  wrap.innerHTML=g.participants.map(pid=>{
+    const u=userById(pid);
+    const isAdminMember=(g.admins||[]).includes(pid);
+    const isMe=pid===me;
+    let controls='';
+    if(amAdmin && !isMe){
+      controls = isAdminMember
+        ? `<button class="btn btn-ghost btn-xs" onclick="demoteFromGroupAdmin('${groupId}','${pid}')">Remove Admin</button>`
+        : `<button class="btn btn-ghost btn-xs" onclick="promoteToGroupAdmin('${groupId}','${pid}')">Make Admin</button>`;
+      controls += ` <button class="btn btn-ghost btn-xs" style="color:var(--red);" onclick="removeGroupMember('${groupId}','${pid}')">Remove</button>`;
+    }
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;">
+      <span style="font-size:.82rem;">${esc(u?u.name:'Unknown')}${isMe?' (you)':''} <span style="color:var(--ink4);font-size:.7rem;">(${esc(u?u.role:'')})</span>${isAdminMember?' <span class="badge b-admin" style="font-size:.6rem;">admin</span>':''}</span>
+      <span style="display:flex;gap:4px;flex-shrink:0;">${controls}</span>
+    </div>`;
+  }).join('');
+}
+function renderGsInviteList(groupId){
+  const wrap=document.getElementById('gsInviteList'); if(!wrap) return;
+  const g=DB.groupChats.find(x=>x.id===groupId); if(!g) return;
+  const invites=g.invites||[];
+  wrap.innerHTML=invites.length? invites.map(pid=>{
+    const u=userById(pid);
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;">
+      <span style="font-size:.82rem;">${esc(u?u.name:'Unknown')} <span style="color:var(--ink4);font-size:.7rem;">(invited)</span></span>
+      <button class="btn btn-ghost btn-xs" onclick="cancelGroupInvite('${groupId}','${pid}')">Cancel</button>
+    </div>`;
+  }).join('') : '<div class="hint" style="padding:4px 8px;">No pending invites.</div>';
+}
+function renderGsAddList(groupId){
+  const wrap=document.getElementById('gsAddList'); if(!wrap) return;
+  const g=DB.groupChats.find(x=>x.id===groupId); if(!g) return;
+  const q=(document.getElementById('gsAddSearch')?.value||'').toLowerCase();
+  const already=new Set([...(g.participants||[]),...(g.invites||[])]);
+  const list=DB.users.filter(u=>u.status==='approved' && !already.has(u.id) && u.name.toLowerCase().includes(q));
+  wrap.innerHTML=list.length? list.slice(0,20).map(u=>`<div class="item-card" style="cursor:pointer;margin-bottom:4px;padding:6px 8px;" onclick="inviteMoreToGroup('${groupId}','${u.id}')">
+    <span style="font-size:.8rem;">${esc(u.name)} <span style="color:var(--ink4);font-size:.7rem;">(${esc(u.role)})</span></span>
+  </div>`).join('') : '<div class="hint" style="padding:4px 8px;">No matches.</div>';
+}
+async function renameGroupChat(groupId){
+  const name=(document.getElementById('gsName').value||'').trim();
+  if(!name){toast('Group name cannot be empty','error');return;}
+  try{
+    await dbFS.collection('groupChats').doc(groupId).update({name});
+    toast('Group renamed','success');
+  }catch(e){ toast('Failed to rename group: '+friendlyError(e),'error'); }
+}
+async function promoteToGroupAdmin(groupId,uidToPromote){
+  try{
+    await dbFS.collection('groupChats').doc(groupId).update({admins: firebase.firestore.FieldValue.arrayUnion(uidToPromote)});
+    toast('Promoted to admin','success');
+    renderGsMemberList(groupId);
+  }catch(e){ toast('Failed: '+friendlyError(e),'error'); }
+}
+async function demoteFromGroupAdmin(groupId,uidToDemote){
+  const g=DB.groupChats.find(x=>x.id===groupId); if(!g) return;
+  if((g.admins||[]).length<=1){ toast('A group needs at least one admin — promote someone else first','error'); return; }
+  try{
+    await dbFS.collection('groupChats').doc(groupId).update({admins: firebase.firestore.FieldValue.arrayRemove(uidToDemote)});
+    toast('Admin removed','success');
+    renderGsMemberList(groupId);
+  }catch(e){ toast('Failed: '+friendlyError(e),'error'); }
+}
+function removeGroupMember(groupId,uidToRemove){
+  const g=DB.groupChats.find(x=>x.id===groupId); if(!g) return;
+  const u=userById(uidToRemove);
+  openConfirm('Remove '+(u?u.name:'this member')+'?','They will stop receiving messages from this group.',async()=>{
+    try{
+      await dbFS.collection('groupChats').doc(groupId).update({
+        participants: firebase.firestore.FieldValue.arrayRemove(uidToRemove),
+        admins: firebase.firestore.FieldValue.arrayRemove(uidToRemove)
+      });
+      toast('Member removed','success');
+      renderGsMemberList(groupId);
+    }catch(e){ toast('Failed to remove member: '+friendlyError(e),'error'); }
+  },'Remove');
+}
+async function cancelGroupInvite(groupId,uidToCancel){
+  try{
+    await dbFS.collection('groupChats').doc(groupId).update({invites: firebase.firestore.FieldValue.arrayRemove(uidToCancel)});
+    toast('Invite cancelled','success');
+    renderGsInviteList(groupId); renderGsAddList(groupId);
+  }catch(e){ toast('Failed: '+friendlyError(e),'error'); }
+}
+async function inviteMoreToGroup(groupId,uidToInvite){
+  try{
+    await dbFS.collection('groupChats').doc(groupId).update({invites: firebase.firestore.FieldValue.arrayUnion(uidToInvite)});
+    toast('Invite sent','success');
+    renderGsInviteList(groupId); renderGsAddList(groupId);
+  }catch(e){ toast('Failed to invite: '+friendlyError(e),'error'); }
+}
 
 function renderChatInput(){
   const inputWrap=document.getElementById('chatInputWrap');
