@@ -450,7 +450,7 @@ auth.setPersistence(firebase.auth.Auth.Persistence.SESSION).catch(()=>{});
    All the render functions below still read DB.users / DB.tests / etc. synchronously
    exactly like before — only the write path (create/update/delete) goes through Firestore.
 */
-let DB={users:[],schools:[],classes:[],tests:[],attempts:[],tickets:[],conversations:[]};
+let DB={users:[],schools:[],classes:[],tests:[],attempts:[],tickets:[],conversations:[],groupChats:[]};
 let currentProfile=null;
 let uiState={sidebarCollapsed:false, page:'dashboard', pageParams:{}};
 let privateListeners=[], publicListeners=[];
@@ -534,11 +534,16 @@ function attachPrivateListeners(){
     // the conversation list sidebar directly instead.
     if(uiState.page==='messages') renderConvoList();
   }, e=>toast('Sync error (messages): '+friendlyError(e),'error')));
+  privateListeners.push(dbFS.collection('groupChats').where('participants','array-contains',currentProfile.id).onSnapshot(snap=>{
+    DB.groupChats=snap.docs.map(d=>({id:d.id,...d.data()}));
+    if(uiState.page==='messages') renderGroupList();
+  }, e=>toast('Sync error (groups): '+friendlyError(e),'error')));
 }
 function detachPrivateListeners(){
   privateListeners.forEach(u=>u()); privateListeners=[];
   if(chatState.msgUnsub){ chatState.msgUnsub(); chatState.msgUnsub=null; }
   chatState.otherUserId=null; chatState.messages=[];
+  chatState.mode='direct'; chatState.groupId=null; chatState.groupMessages=[];
 }
 
 // Re-renders the nav (badges) and, when it's safe to do so, the current page.
@@ -598,7 +603,7 @@ auth.onAuthStateChanged(async (user)=>{
   if(!user){
     currentProfile=null;
     detachPrivateListeners();
-    DB.users=[];DB.tests=[];DB.attempts=[];DB.tickets=[];
+    DB.users=[];DB.tests=[];DB.attempts=[];DB.tickets=[];DB.groupChats=[];
     document.getElementById('shell').classList.remove('show');
     document.getElementById('authScreen').style.display='flex';
     return;
@@ -2060,9 +2065,24 @@ async function submitTicket(){
 }
 
 function renderSupportTickets(c){
-  c.innerHTML=`<div class="page-header"><h2>Support Tickets</h2><p>Queries and issues raised by teachers and students.</p></div>
+  const total=DB.tickets.length;
+  const open=DB.tickets.filter(t=>t.status==='Open').length;
+  const inprog=DB.tickets.filter(t=>t.status==='In Progress').length;
+  const resolved=DB.tickets.filter(t=>t.status==='Resolved').length;
+  const categories=[...new Set(DB.tickets.map(t=>t.category).filter(Boolean))].sort();
+  c.innerHTML=`<div class="page-header"><h2>Support Tickets</h2><p>Every query ever raised, fully trackable — filter, search, and delete as needed.</p></div>
+  <div class="g4" style="margin-bottom:20px;">
+    ${statCard('🗂️','Total Tickets',total,'var(--blue)','var(--blue-lt)')}
+    ${statCard('🟡','Open',open,'var(--gold)','var(--gold-lt)')}
+    ${statCard('🔵','In Progress',inprog,'var(--blue)','var(--blue-lt)')}
+    ${statCard('🟢','Resolved',resolved,'var(--green)','var(--green-lt)')}
+  </div>
   <div class="page-toolbar">
-    <div class="search-box">🔍<input type="text" id="ticketSearch" placeholder="Search by subject or user..." oninput="renderTicketsList()"></div>
+    <div class="search-box">🔍<input type="text" id="ticketSearch" placeholder="Search by subject, ticket #, or user..." oninput="renderTicketsList()"></div>
+    <select id="ticketCategoryFilter" onchange="renderTicketsList()" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">
+      <option value="all">All Categories</option>
+      ${categories.map(cat=>'<option value="'+esc(cat)+'">'+esc(cat)+'</option>').join('')}
+    </select>
     <button class="filter-btn active" data-tf="all" onclick="setTicketFilter('all')">All</button>
     <button class="filter-btn" data-tf="Open" onclick="setTicketFilter('Open')">Open</button>
     <button class="filter-btn" data-tf="In Progress" onclick="setTicketFilter('In Progress')">In Progress</button>
@@ -2080,8 +2100,10 @@ function setTicketFilter(f){
 function renderTicketsList(){
   const q=(document.getElementById('ticketSearch')?.value||'').toLowerCase();
   const f=window._ticketFilter||'all';
+  const cat=document.getElementById('ticketCategoryFilter')?.value||'all';
   let list=[...DB.tickets].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   if(f!=='all') list=list.filter(t=>t.status===f);
+  if(cat!=='all') list=list.filter(t=>t.category===cat);
   if(q) list=list.filter(t=>{
     const u=t.userId?userById(t.userId):null;
     const name=u?u.name:(t.name||'');
@@ -2090,6 +2112,18 @@ function renderTicketsList(){
   const wrap=document.getElementById('ticketsList');
   if(!list.length){wrap.innerHTML='<div class="empty"><div class="e-icon">🗂️</div><div class="e-title">No queries found</div></div>';return;}
   wrap.innerHTML=list.map(t=>adminTicketCardHTML(t)).join('');
+}
+function deleteTicket(id){
+  const t=DB.tickets.find(x=>x.id===id); if(!t) return;
+  openConfirm('Delete ticket '+(t.ticketNo||id)+'?','This permanently removes the ticket and its reply history. This cannot be undone.',async()=>{
+    try{
+      await dbFS.collection('tickets').doc(id).delete();
+      localRemove('tickets',id);
+      toast('Ticket deleted','success');
+      buildNav();
+      renderTicketsList();
+    }catch(e){ toast('Failed to delete: '+friendlyError(e),'error'); }
+  },'Delete');
 }
 function adminTicketCardHTML(t){
   const u=t.userId?userById(t.userId):null;
@@ -2120,6 +2154,7 @@ function adminTicketCardHTML(t){
       </select>
       <input type="text" id="replyInput_${t.id}" placeholder="Write a reply..." style="flex:1;min-width:160px;padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.8rem;" value="${esc(t.reply||'')}">
       <button class="btn btn-primary btn-xs" onclick="replyTicket('${t.id}')">📨 Send Reply</button>
+      <button class="btn btn-danger btn-xs" onclick="deleteTicket('${t.id}')">🗑 Delete</button>
     </div>
   </div>`;
 }
@@ -2137,32 +2172,53 @@ async function replyTicket(id){
   }catch(e){ toast('Failed to update: '+friendlyError(e),'error'); }
 }
 
-/* ============ DIRECT MESSAGES (any user \u2194 any user) ============ */
-let chatState={otherUserId:null, messages:[], msgUnsub:null};
+/* ============ MESSAGES: direct 1:1, plus group & class chats ============
+   Own messages (direct or group) can be edited, deleted, or copied via the
+   small action row that appears under each of your own message bubbles.
+*/
+let chatState={mode:'direct', otherUserId:null, messages:[], msgUnsub:null,
+               groupId:null, groupMessages:[], groupMsgUnsub:null, editingId:null};
+let msgsTab='direct'; // 'direct' | 'groups'
 function convoId(a,b){ return [a,b].sort().join('__'); }
 function otherParticipant(convo){ return convo.participants.find(p=>p!==currentProfile.id); }
 
 function renderMessages(c){
   c.innerHTML=`
-  <div class="page-header"><h2>Messages</h2><p>Direct messages with any teacher, student, or admin.</p></div>
+  <div class="page-header"><h2>Messages</h2><p>Direct messages, group chats, and class group chats.</p></div>
   <div class="card" style="display:flex;height:70vh;overflow:hidden;padding:0;">
-    <div style="width:250px;flex-shrink:0;border-right:1.5px solid var(--border);overflow-y:auto;display:flex;flex-direction:column;">
-      <div style="padding:12px;border-bottom:1.5px solid var(--border);"><button class="btn btn-primary btn-sm btn-full" onclick="openNewChatPicker()">✉️ New Message</button></div>
-      <div id="convoListWrap" style="flex:1;overflow-y:auto;"></div>
+    <div style="width:260px;flex-shrink:0;border-right:1.5px solid var(--border);overflow-y:auto;display:flex;flex-direction:column;">
+      <div class="profile-tabs" style="margin:10px 10px 0;">
+        <div class="profile-tab ${msgsTab==='direct'?'active':''}" onclick="switchMsgsTab('direct')">Direct</div>
+        <div class="profile-tab ${msgsTab==='groups'?'active':''}" onclick="switchMsgsTab('groups')">Groups &amp; Class</div>
+      </div>
+      <div style="padding:12px;border-bottom:1.5px solid var(--border);">
+        <button class="btn btn-primary btn-sm btn-full" id="msgsNewBtn" onclick="${msgsTab==='direct'?'openNewChatPicker()':'openNewGroupModal()'}">${msgsTab==='direct'?'✉️ New Message':'👥 New Group'}</button>
+      </div>
+      <div id="convoListWrap" style="flex:1;overflow-y:auto;${msgsTab!=='direct'?'display:none;':''}"></div>
+      <div id="groupListWrap" style="flex:1;overflow-y:auto;${msgsTab!=='groups'?'display:none;':''}"></div>
     </div>
     <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
-      <div id="chatHeader" style="padding:14px 18px;border-bottom:1.5px solid var(--border);font-weight:700;"></div>
-      <div id="chatMessages" style="flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:8px;"></div>
+      <div id="chatHeader" style="padding:14px 18px;border-bottom:1.5px solid var(--border);font-weight:700;display:flex;align-items:center;justify-content:space-between;gap:10px;"></div>
+      <div id="chatMessages" style="flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:10px;"></div>
       <div id="chatInputWrap" style="padding:12px;border-top:1.5px solid var(--border);"></div>
     </div>
   </div>`;
   renderConvoList();
-  if(chatState.otherUserId) openChat(chatState.otherUserId); else renderChatEmptyState();
+  renderGroupList();
+  if(chatState.mode==='group' && chatState.groupId) openGroupChat(chatState.groupId);
+  else if(chatState.mode==='direct' && chatState.otherUserId) openChat(chatState.otherUserId);
+  else renderChatEmptyState();
+}
+function switchMsgsTab(t){
+  msgsTab=t;
+  document.querySelectorAll('.profile-tab').forEach(el=>{}); // no-op, re-render handles classes
+  render();
 }
 function renderChatEmptyState(){
-  document.getElementById('chatHeader').textContent='';
-  document.getElementById('chatMessages').innerHTML='<div class="empty"><div class="e-icon">💬</div><div class="e-title">No conversation open</div><div class="e-sub">Pick someone from the left, or start a new message.</div></div>';
-  document.getElementById('chatInputWrap').innerHTML='';
+  const h=document.getElementById('chatHeader'); if(h) h.innerHTML='';
+  const m=document.getElementById('chatMessages');
+  if(m) m.innerHTML='<div class="empty"><div class="e-icon">💬</div><div class="e-title">No conversation open</div><div class="e-sub">Pick someone from the left, or start something new.</div></div>';
+  const i=document.getElementById('chatInputWrap'); if(i) i.innerHTML='';
 }
 function renderConvoList(){
   const wrap=document.getElementById('convoListWrap');
@@ -2172,12 +2228,28 @@ function renderConvoList(){
   wrap.innerHTML=sorted.map(convo=>{
     const otherId=otherParticipant(convo);
     const other=userById(otherId);
-    const active=chatState.otherUserId===otherId;
-    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;${active?'background:var(--bg2,#f1f1f1);':''}" onclick="openChat('${otherId}')">
+    const active=chatState.mode==='direct' && chatState.otherUserId===otherId;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;${active?'background:var(--brand-lt);':''}" onclick="openChat('${otherId}')">
       <div style="width:32px;height:32px;flex-shrink:0;border-radius:50%;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;">${esc((other?other.name:'?').charAt(0).toUpperCase())}</div>
       <div style="overflow:hidden;">
         <div style="font-weight:600;font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(other?other.name:'Unknown user')} <span style="font-weight:400;color:var(--ink4);font-size:.7rem;">(${esc(other?other.role:'')})</span></div>
         <div style="font-size:.74rem;color:var(--ink4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(convo.lastMessage||'')}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+function renderGroupList(){
+  const wrap=document.getElementById('groupListWrap');
+  if(!wrap) return;
+  const sorted=[...DB.groupChats].sort((a,b)=>new Date(b.lastMessageAt||b.createdAt||0)-new Date(a.lastMessageAt||a.createdAt||0));
+  if(!sorted.length){ wrap.innerHTML='<div class="empty" style="padding:20px;"><div class="e-icon">👥</div><div class="e-sub">No group or class chats yet</div></div>'; return; }
+  wrap.innerHTML=sorted.map(g=>{
+    const active=chatState.mode==='group' && chatState.groupId===g.id;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;${active?'background:var(--brand-lt);':''}" onclick="openGroupChat('${g.id}')">
+      <div style="width:32px;height:32px;flex-shrink:0;border-radius:9px;background:var(--purple);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;">${g.type==='class'?'🏷️':'👥'}</div>
+      <div style="overflow:hidden;">
+        <div style="font-weight:600;font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(g.name)} <span style="font-weight:400;color:var(--ink4);font-size:.7rem;">(${g.participants.length})</span></div>
+        <div style="font-size:.74rem;color:var(--ink4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(g.lastMessage||'No messages yet')}</div>
       </div>
     </div>`;
   }).join('');
@@ -2204,22 +2276,120 @@ function filterNewChatList(){
   const list=(window._newChatUsers||[]).filter(u=>u.name.toLowerCase().includes(q));
   const wrap=document.getElementById('newChatList');
   if(!wrap) return;
-  wrap.innerHTML=list.length? list.map(u=>`<div class="item-card" style="cursor:pointer;margin-bottom:6px;" onclick="document.getElementById('newChatOverlay').remove();openChat('${u.id}')">
+  wrap.innerHTML=list.length? list.map(u=>`<div class="item-card" style="cursor:pointer;margin-bottom:6px;" onclick="document.getElementById('newChatOverlay').remove();msgsTab='direct';render();openChat('${u.id}')">
     <div class="ic-title">${esc(u.name)} <span class="badge b-${u.role==='admin'?'admin':(u.role==='teacher'?'teacher':'student')}">${esc(u.role)}</span></div>
   </div>`).join('') : '<div class="empty"><div class="e-sub">No matches</div></div>';
 }
+
+/* ---- New Group / Class group modal ---- */
+function openNewGroupModal(){
+  const me=currentUser();
+  const others=DB.users.filter(u=>u.status==='approved' && u.id!==me.id);
+  const classOpts=['<option value="">— pick a class to auto-add everyone in it —</option>'].concat(
+    DB.classes.map(cl=>'<option value="'+cl.id+'">'+esc(cl.name)+'</option>')
+  ).join('');
+  const html=`
+  <div class="overlay" id="newGroupOverlay" style="z-index:600;">
+    <div class="modal modal-wide">
+      <h3>New Group Chat</h3>
+      <p class="modal-sub">Create a custom group, or auto-fill a group with everyone in a class.</p>
+      <div class="field"><label>Group Name <span class="req">*</span></label><input type="text" id="ngName" placeholder="e.g. JEE Batch A Doubts"></div>
+      <div class="field"><label>Auto-add from Class (optional)</label><select id="ngClass" onchange="ngApplyClassPick()">${classOpts}</select></div>
+      <div class="field"><label>Members</label>
+        <input type="text" id="ngMemberSearch" placeholder="Search by name to add manually..." oninput="renderNgMemberList()">
+      </div>
+      <div id="ngMemberList" style="max-height:220px;overflow-y:auto;border:1.5px solid var(--border);border-radius:8px;padding:6px;"></div>
+      <div id="ngSelectedWrap" style="margin-top:10px;"></div>
+      <div class="modal-btns">
+        <button class="btn btn-ghost" onclick="document.getElementById('newGroupOverlay').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="createGroupChat()">Create Group</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+  window._ngAllUsers=others;
+  window._ngSelected=new Set();
+  window._ngIsClass=false;
+  renderNgMemberList();
+  renderNgSelected();
+}
+function ngApplyClassPick(){
+  const clsId=document.getElementById('ngClass').value;
+  if(!clsId){ window._ngIsClass=false; return; }
+  window._ngIsClass=true;
+  window._ngSelected=new Set(window._ngAllUsers.filter(u=>u.cls===clsId).map(u=>u.id));
+  const nameEl=document.getElementById('ngName');
+  if(!nameEl.value.trim()) nameEl.value=className(clsId)+' — Class Group';
+  renderNgMemberList(); renderNgSelected();
+}
+function renderNgMemberList(){
+  const q=(document.getElementById('ngMemberSearch')?.value||'').toLowerCase();
+  const list=(window._ngAllUsers||[]).filter(u=>u.name.toLowerCase().includes(q));
+  const wrap=document.getElementById('ngMemberList');
+  if(!wrap) return;
+  wrap.innerHTML=list.length? list.map(u=>{
+    const checked=window._ngSelected.has(u.id);
+    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;border-radius:6px;">
+      <input type="checkbox" ${checked?'checked':''} onchange="ngToggleMember('${u.id}',this.checked)">
+      <span style="font-size:.82rem;">${esc(u.name)} <span style="color:var(--ink4);font-size:.7rem;">(${esc(u.role)})</span></span>
+    </label>`;
+  }).join('') : '<div class="empty" style="padding:10px;"><div class="e-sub">No matches</div></div>';
+}
+function ngToggleMember(uid,checked){
+  if(checked) window._ngSelected.add(uid); else window._ngSelected.delete(uid);
+  renderNgSelected();
+}
+function renderNgSelected(){
+  const wrap=document.getElementById('ngSelectedWrap'); if(!wrap) return;
+  const ids=[...window._ngSelected];
+  if(!ids.length){ wrap.innerHTML='<p class="hint">No members selected yet.</p>'; return; }
+  wrap.innerHTML='<div style="font-size:.72rem;color:var(--ink3);margin-bottom:6px;">'+ids.length+' member(s) selected:</div>'+
+    ids.map(id=>{
+      const u=userById(id);
+      return '<span class="tag-chip">'+esc(u?u.name:'Unknown')+' <button onclick="ngToggleMember(\''+id+'\',false);renderNgMemberList();renderNgSelected();">✕</button></span>';
+    }).join('');
+}
+async function createGroupChat(){
+  const name=document.getElementById('ngName').value.trim();
+  const members=[...window._ngSelected];
+  if(!name){toast('Enter a group name','error');return;}
+  if(!members.length){toast('Add at least one member','error');return;}
+  const me=currentProfile.id;
+  const participants=[...new Set([me,...members])];
+  if(participants.length<2){toast('A group needs at least 2 members','error');return;}
+  const id=uid('grp');
+  const data={name,type:window._ngIsClass?'class':'group',participants,createdBy:me,createdAt:nowISO(),lastMessage:'',lastMessageAt:nowISO()};
+  try{
+    await dbFS.collection('groupChats').doc(id).set(data);
+    document.getElementById('newGroupOverlay').remove();
+    toast('Group created','success');
+    msgsTab='groups'; render();
+    openGroupChat(id);
+  }catch(e){ toast('Failed to create group: '+friendlyError(e),'error'); }
+}
+function deleteGroupChat(id){
+  openConfirm('Delete this group?','This removes the group chat for everyone in it. This cannot be undone.',async()=>{
+    try{
+      await dbFS.collection('groupChats').doc(id).delete();
+      if(chatState.groupId===id){ chatState.mode='direct'; chatState.groupId=null; if(chatState.groupMsgUnsub){chatState.groupMsgUnsub();chatState.groupMsgUnsub=null;} }
+      toast('Group deleted','success');
+      render();
+    }catch(e){ toast('Failed to delete group: '+friendlyError(e),'error'); }
+  },'Delete');
+}
+
+/* ---- Direct chat ---- */
 function openChat(otherUserId){
+  chatState.mode='direct';
   chatState.otherUserId=otherUserId;
+  if(chatState.groupMsgUnsub){ chatState.groupMsgUnsub(); chatState.groupMsgUnsub=null; }
+  chatState.groupId=null; chatState.editingId=null;
   if(chatState.msgUnsub){ chatState.msgUnsub(); chatState.msgUnsub=null; }
   chatState.messages=[];
   const other=userById(otherUserId);
   const headerEl=document.getElementById('chatHeader');
-  if(headerEl) headerEl.innerHTML=esc(other?other.name:'Unknown user')+' <span style="font-weight:400;color:var(--ink4);font-size:.8rem;">('+esc(other?other.role:'')+')</span>';
-  const inputWrap=document.getElementById('chatInputWrap');
-  if(inputWrap) inputWrap.innerHTML=`<div style="display:flex;gap:8px;">
-    <input type="text" id="chatMsgInput" placeholder="Type a message..." style="flex:1;" onkeydown="if(event.key==='Enter')sendChatMessage()">
-    <button class="btn btn-primary" onclick="sendChatMessage()">Send</button>
-  </div>`;
+  if(headerEl) headerEl.innerHTML='<span>'+esc(other?other.name:'Unknown user')+' <span style="font-weight:400;color:var(--ink4);font-size:.8rem;">('+esc(other?other.role:'')+')</span></span>';
+  renderChatInput();
   const cid=convoId(currentProfile.id,otherUserId);
   chatState.msgUnsub=dbFS.collection('messages').where('conversationId','==',cid).orderBy('createdAt','asc')
     .onSnapshot(snap=>{
@@ -2228,39 +2398,141 @@ function openChat(otherUserId){
     }, e=>toast('Sync error (chat): '+friendlyError(e),'error'));
   renderConvoList();
 }
+
+/* ---- Group / class chat ---- */
+function openGroupChat(groupId){
+  chatState.mode='group';
+  chatState.groupId=groupId;
+  chatState.otherUserId=null; chatState.editingId=null;
+  if(chatState.msgUnsub){ chatState.msgUnsub(); chatState.msgUnsub=null; }
+  if(chatState.groupMsgUnsub){ chatState.groupMsgUnsub(); chatState.groupMsgUnsub=null; }
+  chatState.groupMessages=[];
+  const g=DB.groupChats.find(x=>x.id===groupId);
+  const headerEl=document.getElementById('chatHeader');
+  const canDelete = g && (isCurrentUserAdmin() || g.createdBy===currentProfile.id);
+  if(headerEl) headerEl.innerHTML='<span>'+(g&&g.type==='class'?'🏷️ ':'👥 ')+esc(g?g.name:'Unknown group')+' <span style="font-weight:400;color:var(--ink4);font-size:.8rem;">('+(g?g.participants.length:0)+' members)</span></span>'+
+    (canDelete?'<button class="btn btn-danger btn-xs" onclick="deleteGroupChat(\''+groupId+'\')">🗑 Delete Group</button>':'');
+  renderChatInput();
+  chatState.groupMsgUnsub=dbFS.collection('groupMessages').where('groupId','==',groupId).orderBy('createdAt','asc')
+    .onSnapshot(snap=>{
+      chatState.groupMessages=snap.docs.map(d=>({id:d.id,...d.data()}));
+      renderChatMessages();
+    }, e=>toast('Sync error (group chat): '+friendlyError(e),'error'));
+  renderGroupList();
+}
+function isCurrentUserAdmin(){ const u=currentUser(); return u&&u.role==='admin'; }
+
+function renderChatInput(){
+  const inputWrap=document.getElementById('chatInputWrap');
+  if(!inputWrap) return;
+  inputWrap.innerHTML=`<div style="display:flex;gap:8px;">
+    <input type="text" id="chatMsgInput" placeholder="Type a message..." style="flex:1;" onkeydown="if(event.key==='Enter')sendChatMessage()">
+    <button class="btn btn-primary" onclick="sendChatMessage()">Send</button>
+  </div>`;
+}
+
+/* ---- Rendering messages (shared for direct + group) with edit/delete/copy ---- */
 function renderChatMessages(){
   const wrap=document.getElementById('chatMessages');
   if(!wrap) return;
-  if(!chatState.messages.length){ wrap.innerHTML='<div class="empty"><div class="e-icon">👋</div><div class="e-sub">Say hello \u2014 no messages yet.</div></div>'; return; }
+  const isGroup=chatState.mode==='group';
+  const list=isGroup?chatState.groupMessages:chatState.messages;
+  if(!list.length){ wrap.innerHTML='<div class="empty"><div class="e-icon">👋</div><div class="e-sub">Say hello \u2014 no messages yet.</div></div>'; return; }
   const me=currentProfile.id;
-  wrap.innerHTML=chatState.messages.map(m=>{
+  wrap.innerHTML=list.map(m=>{
     const mine=m.senderId===me;
-    return `<div style="align-self:${mine?'flex-end':'flex-start'};max-width:70%;">
-      <div style="background:${mine?'var(--brand)':'var(--bg2,#f1f1f1)'};color:${mine?'#fff':'inherit'};padding:8px 12px;border-radius:12px;font-size:.86rem;line-height:1.4;white-space:pre-wrap;word-break:break-word;">${esc(m.text)}</div>
+    const sender=isGroup?userById(m.senderId):null;
+    const isEditing=chatState.editingId===m.id;
+    const bubbleId='bub_'+m.id;
+    let inner;
+    if(isEditing){
+      inner=`<div style="display:flex;gap:6px;align-items:center;">
+        <input type="text" id="editInput_${m.id}" value="${esc(m.text)}" style="min-width:160px;" onkeydown="if(event.key==='Enter')saveEditedMessage('${m.id}');if(event.key==='Escape')cancelEditMessage();">
+        <button class="btn btn-success btn-xs" onclick="saveEditedMessage('${m.id}')">💾</button>
+        <button class="btn btn-ghost btn-xs" onclick="cancelEditMessage()">✕</button>
+      </div>`;
+    } else {
+      inner=`<div style="background:${mine?'var(--brand)':'var(--bg2,#f1f1f1)'};color:${mine?'#fff':'inherit'};padding:8px 12px;border-radius:12px;font-size:.86rem;line-height:1.4;white-space:pre-wrap;word-break:break-word;">${isGroup&&!mine?'<div style="font-size:.68rem;font-weight:700;opacity:.75;margin-bottom:2px;">'+esc(sender?sender.name:'Unknown')+'</div>':''}${esc(m.text)}${m.edited?' <span style="opacity:.6;font-size:.68rem;">(edited)</span>':''}</div>`;
+    }
+    const actions=`<div class="msg-actions" style="display:flex;gap:8px;margin-top:2px;font-size:.68rem;justify-content:${mine?'flex-end':'flex-start'};">
+      <button class="btn btn-ghost btn-xs" style="padding:2px 6px;" onclick="copyMessageText('${m.id}')" title="Copy">📋 Copy</button>
+      ${mine&&!isEditing?'<button class="btn btn-ghost btn-xs" style="padding:2px 6px;" onclick="startEditMessage(\''+m.id+'\')" title="Edit">✏️ Edit</button>':''}
+      ${mine?'<button class="btn btn-ghost btn-xs" style="padding:2px 6px;color:var(--red);" onclick="deleteChatMessage(\''+m.id+'\')" title="Delete">🗑 Delete</button>':''}
+    </div>`;
+    return `<div id="${bubbleId}" data-text="${esc(m.text)}" style="align-self:${mine?'flex-end':'flex-start'};max-width:70%;">
+      ${inner}
       <div style="font-size:.68rem;color:var(--ink4);margin-top:2px;text-align:${mine?'right':'left'};">${fmtDate(m.createdAt)}</div>
+      ${actions}
     </div>`;
   }).join('');
   wrap.scrollTop=wrap.scrollHeight;
 }
+function startEditMessage(id){ chatState.editingId=id; renderChatMessages(); setTimeout(()=>{const el=document.getElementById('editInput_'+id); if(el){el.focus(); el.select();}},0); }
+function cancelEditMessage(){ chatState.editingId=null; renderChatMessages(); }
+async function saveEditedMessage(id){
+  const input=document.getElementById('editInput_'+id);
+  const text=input.value.trim();
+  if(!text){toast('Message cannot be empty','error');return;}
+  const coll=chatState.mode==='group'?'groupMessages':'messages';
+  try{
+    await dbFS.collection(coll).doc(id).update({text,edited:true,editedAt:nowISO()});
+    chatState.editingId=null;
+  }catch(e){ toast('Failed to edit: '+friendlyError(e),'error'); }
+}
+function deleteChatMessage(id){
+  openConfirm('Delete this message?','This cannot be undone.',async()=>{
+    const coll=chatState.mode==='group'?'groupMessages':'messages';
+    try{ await dbFS.collection(coll).doc(id).delete(); }
+    catch(e){ toast('Failed to delete: '+friendlyError(e),'error'); }
+  },'Delete');
+}
+function copyMessageText(id){
+  const el=document.getElementById('bub_'+id);
+  const text=el?el.dataset.text:'';
+  if(!text) return;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>toast('Copied to clipboard','success')).catch(()=>toast('Could not copy','error'));
+  } else {
+    toast('Clipboard not available in this browser','error');
+  }
+}
+
+/* ---- Sending ---- */
 async function sendChatMessage(){
   const input=document.getElementById('chatMsgInput');
   const text=input.value.trim();
-  if(!text || !chatState.otherUserId) return;
-  const me=currentProfile.id, other=chatState.otherUserId;
-  const cid=convoId(me,other);
-  input.value=''; input.disabled=true;
-  try{
-    await dbFS.collection('conversations').doc(cid).set({
-      participants:[me,other], lastMessage:text, lastMessageAt:nowISO(), createdAt:nowISO()
-    }, {merge:true});
-    await dbFS.collection('messages').add({
-      conversationId:cid, senderId:me, receiverId:other, text, createdAt:nowISO()
-    });
-  }catch(e){
-    toast('Failed to send: '+friendlyError(e),'error');
-    input.value=text;
-  }finally{
-    input.disabled=false; input.focus();
+  if(!text) return;
+  if(chatState.mode==='group'){
+    if(!chatState.groupId) return;
+    const me=currentProfile.id, groupId=chatState.groupId;
+    input.value=''; input.disabled=true;
+    try{
+      await dbFS.collection('groupChats').doc(groupId).set({lastMessage:text,lastMessageAt:nowISO()},{merge:true});
+      await dbFS.collection('groupMessages').add({groupId,senderId:me,text,createdAt:nowISO()});
+    }catch(e){
+      toast('Failed to send: '+friendlyError(e),'error');
+      input.value=text;
+    }finally{
+      input.disabled=false; input.focus();
+    }
+  } else {
+    if(!chatState.otherUserId) return;
+    const me=currentProfile.id, other=chatState.otherUserId;
+    const cid=convoId(me,other);
+    input.value=''; input.disabled=true;
+    try{
+      await dbFS.collection('conversations').doc(cid).set({
+        participants:[me,other], lastMessage:text, lastMessageAt:nowISO(), createdAt:nowISO()
+      }, {merge:true});
+      await dbFS.collection('messages').add({
+        conversationId:cid, senderId:me, receiverId:other, text, createdAt:nowISO()
+      });
+    }catch(e){
+      toast('Failed to send: '+friendlyError(e),'error');
+      input.value=text;
+    }finally{
+      input.disabled=false; input.focus();
+    }
   }
 }
 
