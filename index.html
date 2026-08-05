@@ -942,6 +942,11 @@ function testAttempts(testId){return DB.attempts.filter(a=>a.testId===testId);}
 function userAttempts(userId){return DB.attempts.filter(a=>a.userId===userId);}
 function maxScoreOf(test){return test.questions.reduce((s,q)=>s+Number(q.marks||1),0);}
 
+function classFilterOptions(selected){
+  return ['<option value="ALL">All Classes</option>'].concat(DB.classes.map(cl=>'<option value="'+cl.id+'"'+(selected===cl.id?' selected':'')+'>'+esc(cl.name)+'</option>')).join('');
+}
+function matchesClass(item,selected){return selected==='ALL'||!item.cls||item.cls==='ALL'||item.cls===selected;}
+
 /* ============ STUDY MATERIALS & EXAM PREP ============ */
 let learningUploadData='';
 
@@ -951,21 +956,24 @@ function renderLearningResources(c,category){
   const intro=isPrep
     ? 'Teacher-curated important topics, composition guidance and exam preparation documents.'
     : 'Notes and PDFs shared by your teachers for class study.';
-  const items=DB.studyMaterials.filter(x=>x.category===category)
+  window._learningClassFilters=window._learningClassFilters||{};
+  const classFilter=window._learningClassFilters[category]||'ALL';
+  const items=DB.studyMaterials.filter(x=>x.category===category && matchesClass(x,classFilter))
     .sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   const teacher=currentUser().role==='teacher';
   const composer=teacher?`
     <div class="card" style="margin-bottom:18px;">
       <div class="card-header"><div><h3>${isPrep?'Share an exam prep guide':'Add study material'}</h3><p style="font-size:.78rem;color:var(--ink3);margin-top:3px;">Write a document here or attach a PDF (up to 500 KB).</p></div></div>
       <div class="g2"><div class="field"><label>Title <span class="req">*</span></label><input id="learningTitle" maxlength="120" placeholder="e.g. Important chapters for the final exam"></div>
-      <div class="field"><label>Subject / class</label><input id="learningSubject" maxlength="100" placeholder="e.g. English — Grade 10"></div></div>
+      <div class="field"><label>Subject</label><input id="learningSubject" maxlength="100" placeholder="e.g. English"></div></div>
+      <div class="field"><label>Target class <span class="req">*</span></label><select id="learningClass">${classFilterOptions('ALL')}</select><div class="hint">Select a class, or choose All Classes to share it with everyone.</div></div>
       <div class="field"><label>Short description</label><input id="learningDescription" maxlength="300" placeholder="What will students find in this material?"></div>
       <div class="field"><label>Written document</label><textarea id="learningText" maxlength="40000" placeholder="Write notes, important topics, composition instructions or a preparation plan here…"></textarea></div>
       <div class="field"><label>PDF attachment (optional)</label><input id="learningPdf" type="file" accept="application/pdf,.pdf" onchange="readLearningPdf(this)"><div class="hint" id="learningFileHint">Choose either written content, a PDF, or both.</div></div>
       <button class="btn btn-primary" onclick="saveLearningResource('${category}',this)">${isPrep?'Publish Guide':'Publish Material'}</button>
     </div>`:'';
   const empty=`<div class="empty" style="grid-column:1/-1;"><div class="e-icon">${isPrep?'✍️':'📚'}</div><div class="e-title">No ${isPrep?'exam prep guides':'study materials'} yet</div><div class="e-sub">${teacher?'Use the form above to share the first one.':'Your teachers have not shared anything here yet.'}</div></div>`;
-  c.innerHTML=`<div class="page-header"><h2>${title}</h2><p>${intro}</p></div>${composer}
+  c.innerHTML=`<div class="page-header"><h2>${title}</h2><p>${intro}</p></div><div class="page-toolbar"><label style="font-size:.78rem;font-weight:600;color:var(--ink3);">Filter by class</label><select onchange="window._learningClassFilters['${category}']=this.value;renderLearningResources(document.getElementById('content'),'${category}')" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">${classFilterOptions(classFilter)}</select></div>${composer}
     <div id="learningList" class="material-grid">${items.length?items.map(learningCardHTML).join(''):empty}</div>`;
 }
 
@@ -974,7 +982,7 @@ function learningCardHTML(item){
   const canDelete=currentUser().role==='admin' || currentProfile.id===item.createdBy;
   const kind=item.fileData?'PDF':'Text document';
   return `<article class="material-card"><div style="display:flex;justify-content:space-between;gap:10px;"><div class="material-icon">${item.fileData?'📄':'📝'}</div><span class="badge ${item.category==='exam-prep'?'b-series':'b-dpp'}">${kind}</span></div>
-    <div><h3>${esc(item.title)}</h3><div class="ic-meta"><span>${esc(item.subject||'General')}</span><span>${esc(author?author.name:'Teacher')}</span></div></div>
+    <div><h3>${esc(item.title)}</h3><div class="ic-meta"><span>${esc(item.subject||'General')}</span><span>🏷️ ${item.cls==='ALL'||!item.cls?'All Classes':esc(className(item.cls))}</span><span>${esc(author?author.name:'Teacher')}</span></div></div>
     ${item.description?`<p>${esc(item.description)}</p>`:''}
     <div class="ic-actions" style="margin-top:auto;">${item.text?`<button class="btn btn-ghost btn-xs" onclick="openLearningText('${item.id}')">Read</button>`:''}${item.fileData?`<a class="btn btn-primary btn-xs" href="${item.fileData}" download="${esc(item.fileName||'study-material.pdf')}">Download PDF</a>`:''}${canDelete?`<button class="btn btn-danger btn-xs" onclick="deleteLearningResource('${item.id}')">Delete</button>`:''}</div></article>`;
 }
@@ -994,6 +1002,7 @@ function readLearningPdf(input){
 async function saveLearningResource(category,btn){
   const title=(document.getElementById('learningTitle').value||'').trim();
   const subject=(document.getElementById('learningSubject').value||'').trim();
+  const cls=document.getElementById('learningClass').value;
   const description=(document.getElementById('learningDescription').value||'').trim();
   const text=(document.getElementById('learningText').value||'').trim();
   const file=document.getElementById('learningPdf').files[0];
@@ -1001,7 +1010,7 @@ async function saveLearningResource(category,btn){
   if(!text&&!learningUploadData){toast('Write a document or attach a PDF','error');return;}
   btn.disabled=true; btn.textContent='Publishing…';
   try{
-    await dbFS.collection('studyMaterials').add({category,title,subject,description,text,fileData:learningUploadData||'',fileName:file?file.name:'',createdBy:currentProfile.id,createdAt:nowISO()});
+    await dbFS.collection('studyMaterials').add({category,title,subject,cls,description,text,fileData:learningUploadData||'',fileName:file?file.name:'',createdBy:currentProfile.id,createdAt:nowISO()});
     learningUploadData=''; toast('Published for students','success'); render();
   }catch(e){toast('Could not publish: '+friendlyError(e),'error');btn.disabled=false;btn.textContent=category==='exam-prep'?'Publish Guide':'Publish Material';}
 }
@@ -1250,10 +1259,12 @@ function removeClass(id,inUse){
 
 /* ============ ADMIN: ALL TESTS ============ */
 function renderAllTests(c){
-  c.innerHTML=`<div class="page-header"><h2>All Tests &amp; DPPs</h2><p>Every test created across PrepHub.</p></div><div id="allTestsList"></div>`;
+  if(!window._allTestsClassFilter) window._allTestsClassFilter='ALL';
+  c.innerHTML=`<div class="page-header"><h2>All Tests &amp; DPPs</h2><p>Every test created across PrepHub.</p></div><div class="page-toolbar"><label style="font-size:.78rem;font-weight:600;color:var(--ink3);">Filter by class</label><select onchange="window._allTestsClassFilter=this.value;renderAllTests(document.getElementById('content'))" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">${classFilterOptions(window._allTestsClassFilter)}</select></div><div id="allTestsList"></div>`;
   const wrap=document.getElementById('allTestsList');
-  if(!DB.tests.length){wrap.innerHTML='<div class="empty"><div class="e-icon">📝</div><div class="e-title">No tests created yet</div></div>';return;}
-  wrap.innerHTML=[...DB.tests].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(t=>testCardHTML(t,true)).join('');
+  const tests=DB.tests.filter(t=>matchesClass(t,window._allTestsClassFilter));
+  if(!tests.length){wrap.innerHTML='<div class="empty"><div class="e-icon">📝</div><div class="e-title">No tests for this class</div></div>';return;}
+  wrap.innerHTML=[...tests].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(t=>testCardHTML(t,true)).join('');
 }
 
 /* ============ TEACHER: DASHBOARD ============ */
@@ -1339,9 +1350,10 @@ function editTest(id){goPage('edittest',{testId:id});}
 /* ============ TEACHER: MY TESTS ============ */
 function renderMyTests(c){
   const u=currentUser();
-  const mine=DB.tests.filter(t=>t.createdBy===u.id);
+  if(!window._myTestsClassFilter) window._myTestsClassFilter='ALL';
+  const mine=DB.tests.filter(t=>t.createdBy===u.id && matchesClass(t,window._myTestsClassFilter));
   c.innerHTML=`<div class="page-header"><h2>My Tests &amp; DPPs</h2><p>Everything you've created.</p></div>
-  <div style="margin-bottom:16px;"><button class="btn btn-primary" onclick="goPage('createtest')">➕ Create New Test / DPP</button></div>
+  <div class="page-toolbar"><button class="btn btn-primary" onclick="goPage('createtest')">➕ Create New Test / DPP</button><label style="font-size:.78rem;font-weight:600;color:var(--ink3);">Filter by class</label><select onchange="window._myTestsClassFilter=this.value;renderMyTests(document.getElementById('content'))" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">${classFilterOptions(window._myTestsClassFilter)}</select></div>
   <div id="myTestsList"></div>`;
   const wrap=document.getElementById('myTestsList');
   wrap.innerHTML= mine.length? [...mine].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(t=>testCardHTML(t,false)).join('') : '<div class="empty"><div class="e-icon">📝</div><div class="e-title">No tests yet</div></div>';
@@ -1559,15 +1571,20 @@ function allPublishedTests(){ return DB.tests.filter(t=>t.published); }
 function renderAvailableTests(c){
   const u=currentUser();
   if(!window._availScope) window._availScope='mine'; // 'mine' | 'all'
+  if(!window._availClassFilter) window._availClassFilter='ALL';
   c.innerHTML=`<div class="page-header"><h2>Available Tests</h2><p>Tests and DPPs assigned to ${esc(className(u.cls))}, ${esc(schoolName(u.school))}.</p></div>
   <div class="page-toolbar">
     <select id="availScopeSel" onchange="window._availScope=this.value;renderAvailableTests(document.getElementById('content'))" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">
       <option value="mine" ${window._availScope==='mine'?'selected':''}>My Class Only</option>
       <option value="all" ${window._availScope==='all'?'selected':''}>All Tests (every class)</option>
     </select>
+    <select id="availClassSel" onchange="window._availClassFilter=this.value;renderAvailableTests(document.getElementById('content'))" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">
+      ${classFilterOptions(window._availClassFilter)}
+    </select>
   </div>
   <div id="availList"></div>`;
-  const avail = window._availScope==='all' ? allPublishedTests() : availableTestsFor(u);
+  const baseAvail = window._availScope==='all' ? allPublishedTests() : availableTestsFor(u);
+  const avail=baseAvail.filter(t=>matchesClass(t,window._availClassFilter));
   document.getElementById('availList').innerHTML = avail.length? [...avail].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(t=>studentTestCard(t)).join('') : '<div class="empty"><div class="e-icon">📭</div><div class="e-title">No tests assigned yet</div></div>';
 }
 
