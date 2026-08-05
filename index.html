@@ -130,6 +130,11 @@ html,body{height:100%;font-family:'Inter',sans-serif;font-size:14px;background:v
 .item-card .ic-meta{font-size:.77rem;color:var(--ink3);margin-top:5px;display:flex;gap:14px;flex-wrap:wrap;}
 .item-card .ic-meta span{display:flex;align-items:center;gap:4px;}
 .item-card .ic-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);}
+.material-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;}
+.material-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:18px;display:flex;flex-direction:column;gap:10px;min-height:205px;transition:box-shadow var(--trans),border-color var(--trans);}
+.material-card:hover{box-shadow:var(--sh2);border-color:var(--border2);}
+.material-card .material-icon{width:38px;height:38px;border-radius:10px;background:var(--brand-lt);display:flex;align-items:center;justify-content:center;font-size:1.1rem;}
+.material-card h3{font-size:.94rem;line-height:1.35;}.material-card p{font-size:.78rem;color:var(--ink3);line-height:1.5;white-space:pre-wrap;}
 .sep{height:1px;background:var(--border);margin:18px 0;}
 .empty{text-align:center;padding:50px 20px;}
 .empty .e-icon{font-size:2.5rem;margin-bottom:10px;}
@@ -450,7 +455,7 @@ auth.setPersistence(firebase.auth.Auth.Persistence.SESSION).catch(()=>{});
    All the render functions below still read DB.users / DB.tests / etc. synchronously
    exactly like before — only the write path (create/update/delete) goes through Firestore.
 */
-let DB={users:[],schools:[],classes:[],tests:[],attempts:[],tickets:[],conversations:[],groupChats:[],groupInvites:[]};
+let DB={users:[],schools:[],classes:[],tests:[],attempts:[],tickets:[],conversations:[],groupChats:[],groupInvites:[],studyMaterials:[]};
 let currentProfile=null;
 let uiState={sidebarCollapsed:false, page:'dashboard', pageParams:{}};
 let privateListeners=[], publicListeners=[];
@@ -522,6 +527,10 @@ function attachPrivateListeners(){
     DB.attempts=snap.docs.map(d=>({id:d.id,...d.data()}));
     refreshUI();
   }, e=>toast('Sync error (attempts): '+friendlyError(e),'error')));
+  privateListeners.push(dbFS.collection('studyMaterials').onSnapshot(snap=>{
+    DB.studyMaterials=snap.docs.map(d=>({id:d.id,...d.data()}));
+    refreshUI();
+  }, e=>toast('Sync error (study materials): '+friendlyError(e),'error')));
   // The tickets rule allows a read either if you're an admin, or if it's your
   // OWN ticket (resource.data.userId == your uid). Firestore can only allow an
   // unfiltered list() query when the rule can be proven safe purely from what
@@ -640,7 +649,7 @@ auth.onAuthStateChanged(async (user)=>{
   if(!user){
     currentProfile=null;
     detachPrivateListeners();
-    DB.users=[];DB.tests=[];DB.attempts=[];DB.tickets=[];DB.groupChats=[];DB.groupInvites=[];
+    DB.users=[];DB.tests=[];DB.attempts=[];DB.tickets=[];DB.groupChats=[];DB.groupInvites=[];DB.studyMaterials=[];
     document.getElementById('shell').classList.remove('show');
     document.getElementById('authScreen').style.display='flex';
     return;
@@ -829,6 +838,9 @@ function buildNav(){
       {sec:'Tests'},
       {p:'alltests',icon:'📝',label:'All Tests'},
       {p:'analytics',icon:'📈',label:'Analytics'},
+      {sec:'Learning'},
+      {p:'materials',icon:'📚',label:'Study Materials'},
+      {p:'examprep',icon:'✍️',label:'Exam Prep Guides'},
       {sec:'Support'},
       {p:'supporttickets',icon:'🆘',label:'Support Tickets',badge:openTicketCount()||null},
       {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
@@ -843,6 +855,9 @@ function buildNav(){
       {p:'createtest',icon:'➕',label:'Create Test / DPP'},
       {p:'mytests',icon:'📝',label:'My Tests'},
       {p:'analytics',icon:'📈',label:'Analytics'},
+      {sec:'Learning'},
+      {p:'materials',icon:'📚',label:'Study Materials'},
+      {p:'examprep',icon:'✍️',label:'Exam Prep Guides'},
       {sec:'Support'},
       {p:'support',icon:'🆘',label:'Help & Support'},
       {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
@@ -857,6 +872,9 @@ function buildNav(){
       {p:'available',icon:'📥',label:'Available Tests'},
       {p:'results',icon:'🏆',label:'My Results'},
       {p:'analytics',icon:'📈',label:'My Analytics'},
+      {sec:'Learning'},
+      {p:'materials',icon:'📚',label:'Study Materials'},
+      {p:'examprep',icon:'✍️',label:'Exam Prep Guides'},
       {sec:'Support'},
       {p:'support',icon:'🆘',label:'Help & Support'},
       {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
@@ -881,7 +899,7 @@ function goPage(page,params){
   const titles={dashboard:'Dashboard',approvals:'Pending Approvals',users:'Manage Users',registry:'Schools & Classes',
     alltests:'All Tests',analytics:'Analytics',createtest:'Create Test / DPP',mytests:'My Tests',available:'Available Tests',
     results:'My Results',profile:'My Profile',testrunner:'Attempt Test',testreview:'Test Review',testanalytics:'Test Analytics',edittest:'Edit Test',
-    support:'Help & Support',supporttickets:'Support Tickets',messages:'Messages'};
+    support:'Help & Support',supporttickets:'Support Tickets',messages:'Messages',materials:'Study Materials',examprep:'Exam Prep Guides'};
   document.getElementById('pageTitle').textContent=titles[page]||'PrepHub';
   render();
 }
@@ -906,7 +924,9 @@ function render(){
     edittest: renderCreateTest,
     support: renderSupport,
     supporttickets: renderSupportTickets,
-    messages: renderMessages
+    messages: renderMessages,
+    materials: (el)=>renderLearningResources(el,'material'),
+    examprep: (el)=>renderLearningResources(el,'exam-prep')
   };
   c.innerHTML='';
   (fns[uiState.page]||renderNotFound)(c);
@@ -921,6 +941,80 @@ function testById(id){return DB.tests.find(x=>x.id===id);}
 function testAttempts(testId){return DB.attempts.filter(a=>a.testId===testId);}
 function userAttempts(userId){return DB.attempts.filter(a=>a.userId===userId);}
 function maxScoreOf(test){return test.questions.reduce((s,q)=>s+Number(q.marks||1),0);}
+
+/* ============ STUDY MATERIALS & EXAM PREP ============ */
+let learningUploadData='';
+
+function renderLearningResources(c,category){
+  const isPrep=category==='exam-prep';
+  const title=isPrep?'Exam Prep Guides':'Study Materials';
+  const intro=isPrep
+    ? 'Teacher-curated important topics, composition guidance and exam preparation documents.'
+    : 'Notes and PDFs shared by your teachers for class study.';
+  const items=DB.studyMaterials.filter(x=>x.category===category)
+    .sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  const teacher=currentUser().role==='teacher';
+  const composer=teacher?`
+    <div class="card" style="margin-bottom:18px;">
+      <div class="card-header"><div><h3>${isPrep?'Share an exam prep guide':'Add study material'}</h3><p style="font-size:.78rem;color:var(--ink3);margin-top:3px;">Write a document here or attach a PDF (up to 500 KB).</p></div></div>
+      <div class="g2"><div class="field"><label>Title <span class="req">*</span></label><input id="learningTitle" maxlength="120" placeholder="e.g. Important chapters for the final exam"></div>
+      <div class="field"><label>Subject / class</label><input id="learningSubject" maxlength="100" placeholder="e.g. English — Grade 10"></div></div>
+      <div class="field"><label>Short description</label><input id="learningDescription" maxlength="300" placeholder="What will students find in this material?"></div>
+      <div class="field"><label>Written document</label><textarea id="learningText" maxlength="40000" placeholder="Write notes, important topics, composition instructions or a preparation plan here…"></textarea></div>
+      <div class="field"><label>PDF attachment (optional)</label><input id="learningPdf" type="file" accept="application/pdf,.pdf" onchange="readLearningPdf(this)"><div class="hint" id="learningFileHint">Choose either written content, a PDF, or both.</div></div>
+      <button class="btn btn-primary" onclick="saveLearningResource('${category}',this)">${isPrep?'Publish Guide':'Publish Material'}</button>
+    </div>`:'';
+  const empty=`<div class="empty" style="grid-column:1/-1;"><div class="e-icon">${isPrep?'✍️':'📚'}</div><div class="e-title">No ${isPrep?'exam prep guides':'study materials'} yet</div><div class="e-sub">${teacher?'Use the form above to share the first one.':'Your teachers have not shared anything here yet.'}</div></div>`;
+  c.innerHTML=`<div class="page-header"><h2>${title}</h2><p>${intro}</p></div>${composer}
+    <div id="learningList" class="material-grid">${items.length?items.map(learningCardHTML).join(''):empty}</div>`;
+}
+
+function learningCardHTML(item){
+  const author=userById(item.createdBy);
+  const canDelete=currentUser().role==='admin' || currentProfile.id===item.createdBy;
+  const kind=item.fileData?'PDF':'Text document';
+  return `<article class="material-card"><div style="display:flex;justify-content:space-between;gap:10px;"><div class="material-icon">${item.fileData?'📄':'📝'}</div><span class="badge ${item.category==='exam-prep'?'b-series':'b-dpp'}">${kind}</span></div>
+    <div><h3>${esc(item.title)}</h3><div class="ic-meta"><span>${esc(item.subject||'General')}</span><span>${esc(author?author.name:'Teacher')}</span></div></div>
+    ${item.description?`<p>${esc(item.description)}</p>`:''}
+    <div class="ic-actions" style="margin-top:auto;">${item.text?`<button class="btn btn-ghost btn-xs" onclick="openLearningText('${item.id}')">Read</button>`:''}${item.fileData?`<a class="btn btn-primary btn-xs" href="${item.fileData}" download="${esc(item.fileName||'study-material.pdf')}">Download PDF</a>`:''}${canDelete?`<button class="btn btn-danger btn-xs" onclick="deleteLearningResource('${item.id}')">Delete</button>`:''}</div></article>`;
+}
+
+function readLearningPdf(input){
+  const file=input.files&&input.files[0]; learningUploadData='';
+  const hint=document.getElementById('learningFileHint');
+  if(!file){if(hint)hint.textContent='Choose either written content, a PDF, or both.';return;}
+  if(file.type!=='application/pdf' || file.size>500*1024){
+    input.value=''; if(hint)hint.textContent='Please choose a PDF no larger than 500 KB.'; toast('PDF must be 500 KB or smaller','error'); return;
+  }
+  const reader=new FileReader();
+  reader.onload=()=>{learningUploadData=reader.result; if(hint)hint.textContent='Attached: '+file.name+' ('+Math.ceil(file.size/1024)+' KB)';};
+  reader.onerror=()=>toast('Could not read this PDF','error'); reader.readAsDataURL(file);
+}
+
+async function saveLearningResource(category,btn){
+  const title=(document.getElementById('learningTitle').value||'').trim();
+  const subject=(document.getElementById('learningSubject').value||'').trim();
+  const description=(document.getElementById('learningDescription').value||'').trim();
+  const text=(document.getElementById('learningText').value||'').trim();
+  const file=document.getElementById('learningPdf').files[0];
+  if(!title){toast('Please enter a title','error');return;}
+  if(!text&&!learningUploadData){toast('Write a document or attach a PDF','error');return;}
+  btn.disabled=true; btn.textContent='Publishing…';
+  try{
+    await dbFS.collection('studyMaterials').add({category,title,subject,description,text,fileData:learningUploadData||'',fileName:file?file.name:'',createdBy:currentProfile.id,createdAt:nowISO()});
+    learningUploadData=''; toast('Published for students','success'); render();
+  }catch(e){toast('Could not publish: '+friendlyError(e),'error');btn.disabled=false;btn.textContent=category==='exam-prep'?'Publish Guide':'Publish Material';}
+}
+
+function openLearningText(id){
+  const item=DB.studyMaterials.find(x=>x.id===id); if(!item)return;
+  const html=`<div class="overlay" id="learningTextOverlay"><div class="modal modal-wide"><h3>${esc(item.title)}</h3><p class="modal-sub">${esc(item.subject||'General')} · ${esc(userById(item.createdBy)?.name||'Teacher')}</p><div style="white-space:pre-wrap;line-height:1.65;font-size:.86rem;padding:4px 0;">${esc(item.text||'')}</div><div class="modal-btns"><button class="btn btn-ghost" onclick="document.getElementById('learningTextOverlay').remove()">Close</button></div></div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+
+function deleteLearningResource(id){
+  openConfirm('Delete this resource?','Students will no longer be able to access it.',async()=>{try{await dbFS.collection('studyMaterials').doc(id).delete();toast('Resource deleted','success');}catch(e){toast('Could not delete: '+friendlyError(e),'error');}},'Delete');
+}
 
 /* ============ ADMIN: DASHBOARD ============ */
 function renderAdminDashboard(c){
