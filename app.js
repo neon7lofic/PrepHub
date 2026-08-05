@@ -528,6 +528,7 @@ function matchesClass(item,selected){return selected==='ALL'||!item.cls||item.cl
 
 /* ============ STUDY MATERIALS & EXAM PREP ============ */
 let learningUploadData='';
+let learningEditUploadData='';
 
 function renderLearningResources(c,category){
   const isPrep=category==='exam-prep';
@@ -558,12 +559,12 @@ function renderLearningResources(c,category){
 
 function learningCardHTML(item){
   const author=userById(item.createdBy);
-  const canDelete=currentUser().role==='admin' || currentProfile.id===item.createdBy;
+  const canManage=currentUser().role==='admin' || currentProfile.id===item.createdBy;
   const kind=item.fileData?'PDF':'Text document';
   return `<article class="material-card"><div style="display:flex;justify-content:space-between;gap:10px;"><div class="material-icon">${item.fileData?'📄':'📝'}</div><span class="badge ${item.category==='exam-prep'?'b-series':'b-dpp'}">${kind}</span></div>
     <div><h3>${esc(item.title)}</h3><div class="ic-meta"><span>${esc(item.subject||'General')}</span><span>🏷️ ${item.cls==='ALL'||!item.cls?'All Classes':esc(className(item.cls))}</span><span>${esc(author?author.name:'Teacher')}</span></div></div>
     ${item.description?`<p>${esc(item.description)}</p>`:''}
-    <div class="ic-actions" style="margin-top:auto;">${item.text?`<button class="btn btn-ghost btn-xs" onclick="openLearningText('${item.id}')">Read</button>`:''}${item.fileData?`<a class="btn btn-primary btn-xs" href="${item.fileData}" download="${esc(item.fileName||'study-material.pdf')}">Download PDF</a>`:''}${canDelete?`<button class="btn btn-danger btn-xs" onclick="deleteLearningResource('${item.id}')">Delete</button>`:''}</div></article>`;
+    <div class="ic-actions" style="margin-top:auto;">${item.text?`<button class="btn btn-ghost btn-xs" onclick="openLearningText('${item.id}')">Read</button>`:''}${item.fileData?`<a class="btn btn-primary btn-xs" href="${item.fileData}" download="${esc(item.fileName||'study-material.pdf')}">Download PDF</a>`:''}${canManage?`<button class="btn btn-blue btn-xs" onclick="openEditLearningResource('${item.id}')">Edit</button><button class="btn btn-danger btn-xs" onclick="deleteLearningResource('${item.id}')">Delete</button>`:''}</div></article>`;
 }
 
 function readLearningPdf(input){
@@ -598,6 +599,53 @@ function openLearningText(id){
   const item=DB.studyMaterials.find(x=>x.id===id); if(!item)return;
   const html=`<div class="overlay" id="learningTextOverlay"><div class="modal modal-wide"><h3>${esc(item.title)}</h3><p class="modal-sub">${esc(item.subject||'General')} · ${esc(userById(item.createdBy)?.name||'Teacher')}</p><div style="white-space:pre-wrap;line-height:1.65;font-size:.86rem;padding:4px 0;">${esc(item.text||'')}</div><div class="modal-btns"><button class="btn btn-ghost" onclick="document.getElementById('learningTextOverlay').remove()">Close</button></div></div></div>`;
   document.body.insertAdjacentHTML('beforeend',html);
+}
+
+function openEditLearningResource(id){
+  const item=DB.studyMaterials.find(x=>x.id===id); if(!item)return;
+  learningEditUploadData='';
+  const fileInfo=item.fileData?`Current PDF: ${esc(item.fileName||'attached PDF')}`:'No PDF attached.';
+  const html=`<div class="overlay" id="editLearningOverlay" style="z-index:600;"><div class="modal modal-wide">
+    <h3>Edit ${item.category==='exam-prep'?'Exam Prep Guide':'Study Material'}</h3>
+    <p class="modal-sub">Update the content students see. Your changes are published immediately.</p>
+    <div class="g2"><div class="field"><label>Title <span class="req">*</span></label><input id="editLearningTitle" maxlength="120" value="${esc(item.title)}"></div><div class="field"><label>Subject</label><input id="editLearningSubject" maxlength="100" value="${esc(item.subject||'')}"></div></div>
+    <div class="field"><label>Target class <span class="req">*</span></label><select id="editLearningClass">${classFilterOptions(item.cls||'ALL')}</select></div>
+    <div class="field"><label>Short description</label><input id="editLearningDescription" maxlength="300" value="${esc(item.description||'')}"></div>
+    <div class="field"><label>Written document</label><textarea id="editLearningText" maxlength="40000">${esc(item.text||'')}</textarea></div>
+    <div class="field"><label>Replace PDF attachment (optional)</label><input id="editLearningPdf" type="file" accept="application/pdf,.pdf" onchange="readEditLearningPdf(this)"><div class="hint" id="editLearningFileHint">${fileInfo}</div>${item.fileData?'<label style="margin-top:8px;text-transform:none;font-weight:500;"><input id="removeLearningPdf" type="checkbox" style="width:auto;margin-right:6px;"> Remove current PDF</label>':''}</div>
+    <div class="modal-btns"><button class="btn btn-ghost" onclick="document.getElementById('editLearningOverlay').remove()">Cancel</button><button class="btn btn-primary" onclick="saveEditedLearningResource('${id}',this)">Save Changes</button></div>
+  </div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+
+function readEditLearningPdf(input){
+  const file=input.files&&input.files[0]; learningEditUploadData='';
+  const hint=document.getElementById('editLearningFileHint');
+  if(!file){if(hint)hint.textContent='No replacement PDF selected.';return;}
+  if(file.type!=='application/pdf' || file.size>500*1024){input.value='';if(hint)hint.textContent='Please choose a PDF no larger than 500 KB.';toast('PDF must be 500 KB or smaller','error');return;}
+  const reader=new FileReader();
+  reader.onload=()=>{learningEditUploadData=reader.result;if(hint)hint.textContent='New PDF ready: '+file.name+' ('+Math.ceil(file.size/1024)+' KB)';};
+  reader.onerror=()=>toast('Could not read this PDF','error');reader.readAsDataURL(file);
+}
+
+async function saveEditedLearningResource(id,btn){
+  const item=DB.studyMaterials.find(x=>x.id===id); if(!item)return;
+  const title=(document.getElementById('editLearningTitle').value||'').trim();
+  const subject=(document.getElementById('editLearningSubject').value||'').trim();
+  const cls=document.getElementById('editLearningClass').value;
+  const description=(document.getElementById('editLearningDescription').value||'').trim();
+  const text=(document.getElementById('editLearningText').value||'').trim();
+  const replacement=document.getElementById('editLearningPdf').files[0];
+  const remove=!!document.getElementById('removeLearningPdf')?.checked;
+  const fileData=learningEditUploadData||(!remove?(item.fileData||''):'');
+  const fileName=learningEditUploadData?(replacement?replacement.name:''):(!remove?(item.fileName||''):'');
+  if(!title){toast('Please enter a title','error');return;}
+  if(!text&&!fileData){toast('Keep written content or a PDF attachment','error');return;}
+  btn.disabled=true;btn.textContent='Saving…';
+  try{
+    await dbFS.collection('studyMaterials').doc(id).update({title,subject,cls,description,text,fileData,fileName,updatedAt:nowISO()});
+    learningEditUploadData='';document.getElementById('editLearningOverlay').remove();toast('Changes saved','success');
+  }catch(e){toast('Could not save: '+friendlyError(e),'error');btn.disabled=false;btn.textContent='Save Changes';}
 }
 
 function deleteLearningResource(id){
