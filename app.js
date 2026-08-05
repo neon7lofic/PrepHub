@@ -34,7 +34,7 @@ auth.setPersistence(firebase.auth.Auth.Persistence.SESSION).catch(()=>{});
    All the render functions below still read DB.users / DB.tests / etc. synchronously
    exactly like before — only the write path (create/update/delete) goes through Firestore.
 */
-let DB={users:[],schools:[],classes:[],tests:[],attempts:[],tickets:[],conversations:[],groupChats:[],groupInvites:[],studyMaterials:[]};
+let DB={users:[],schools:[],classes:[],tests:[],attempts:[],tickets:[],conversations:[],groupChats:[],groupInvites:[],studyMaterials:[],polls:[],pollVotes:[],materialComments:[]};
 let currentProfile=null;
 let uiState={sidebarCollapsed:false, page:'dashboard', pageParams:{}};
 let privateListeners=[], publicListeners=[];
@@ -110,6 +110,18 @@ function attachPrivateListeners(){
     DB.studyMaterials=snap.docs.map(d=>({id:d.id,...d.data()}));
     refreshUI();
   }, e=>toast('Sync error (study materials): '+friendlyError(e),'error')));
+  privateListeners.push(dbFS.collection('polls').onSnapshot(snap=>{
+    DB.polls=snap.docs.map(d=>({id:d.id,...d.data()}));
+    refreshUI();
+  }, e=>toast('Sync error (polls): '+friendlyError(e),'error')));
+  privateListeners.push(dbFS.collectionGroup('votes').onSnapshot(snap=>{
+    DB.pollVotes=snap.docs.map(d=>({id:d.id,...d.data()}));
+    if(uiState.page==='polls') render();
+  }, e=>toast('Sync error (poll votes): '+friendlyError(e),'error')));
+  privateListeners.push(dbFS.collectionGroup('comments').onSnapshot(snap=>{
+    DB.materialComments=snap.docs.map(d=>({id:d.id,...d.data()}));
+    if(uiState.page==='materials'||uiState.page==='examprep') render();
+  }, e=>toast('Sync error (material discussions): '+friendlyError(e),'error')));
   // The tickets rule allows a read either if you're an admin, or if it's your
   // OWN ticket (resource.data.userId == your uid). Firestore can only allow an
   // unfiltered list() query when the rule can be proven safe purely from what
@@ -228,7 +240,7 @@ auth.onAuthStateChanged(async (user)=>{
   if(!user){
     currentProfile=null;
     detachPrivateListeners();
-    DB.users=[];DB.tests=[];DB.attempts=[];DB.tickets=[];DB.groupChats=[];DB.groupInvites=[];DB.studyMaterials=[];
+    DB.users=[];DB.tests=[];DB.attempts=[];DB.tickets=[];DB.groupChats=[];DB.groupInvites=[];DB.studyMaterials=[];DB.polls=[];DB.pollVotes=[];DB.materialComments=[];
     document.getElementById('shell').classList.remove('show');
     document.getElementById('authScreen').style.display='flex';
     return;
@@ -420,6 +432,7 @@ function buildNav(){
       {sec:'Learning'},
       {p:'materials',icon:'📚',label:'Study Materials'},
       {p:'examprep',icon:'✍️',label:'Exam Prep Guides'},
+      {p:'polls',icon:'🗳️',label:'Class Polls'},
       {sec:'Support'},
       {p:'supporttickets',icon:'🆘',label:'Support Tickets',badge:openTicketCount()||null},
       {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
@@ -437,6 +450,7 @@ function buildNav(){
       {sec:'Learning'},
       {p:'materials',icon:'📚',label:'Study Materials'},
       {p:'examprep',icon:'✍️',label:'Exam Prep Guides'},
+      {p:'polls',icon:'🗳️',label:'Class Polls'},
       {sec:'Support'},
       {p:'support',icon:'🆘',label:'Help & Support'},
       {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
@@ -451,9 +465,11 @@ function buildNav(){
       {p:'available',icon:'📥',label:'Available Tests'},
       {p:'results',icon:'🏆',label:'My Results'},
       {p:'analytics',icon:'📈',label:'My Analytics'},
+      {p:'progress',icon:'🎯',label:'My Progress'},
       {sec:'Learning'},
       {p:'materials',icon:'📚',label:'Study Materials'},
       {p:'examprep',icon:'✍️',label:'Exam Prep Guides'},
+      {p:'polls',icon:'🗳️',label:'Class Polls'},
       {sec:'Support'},
       {p:'support',icon:'🆘',label:'Help & Support'},
       {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
@@ -478,7 +494,7 @@ function goPage(page,params){
   const titles={dashboard:'Dashboard',approvals:'Pending Approvals',users:'Manage Users',registry:'Schools & Classes',
     alltests:'All Tests',analytics:'Analytics',createtest:'Create Test / DPP',mytests:'My Tests',available:'Available Tests',
     results:'My Results',profile:'My Profile',testrunner:'Attempt Test',testreview:'Test Review',testanalytics:'Test Analytics',edittest:'Edit Test',
-    support:'Help & Support',supporttickets:'Support Tickets',messages:'Messages',materials:'Study Materials',examprep:'Exam Prep Guides'};
+    support:'Help & Support',supporttickets:'Support Tickets',messages:'Messages',materials:'Study Materials',examprep:'Exam Prep Guides',polls:'Class Polls',progress:'My Progress'};
   document.getElementById('pageTitle').textContent=titles[page]||'PrepHub';
   render();
 }
@@ -505,7 +521,9 @@ function render(){
     supporttickets: renderSupportTickets,
     messages: renderMessages,
     materials: (el)=>renderLearningResources(el,'material'),
-    examprep: (el)=>renderLearningResources(el,'exam-prep')
+    examprep: (el)=>renderLearningResources(el,'exam-prep'),
+    polls: renderPolls,
+    progress: renderStudentProgress
   };
   c.innerHTML='';
   (fns[uiState.page]||renderNotFound)(c);
@@ -525,6 +543,7 @@ function classFilterOptions(selected){
   return ['<option value="ALL">All Classes</option>'].concat(DB.classes.map(cl=>'<option value="'+cl.id+'"'+(selected===cl.id?' selected':'')+'>'+esc(cl.name)+'</option>')).join('');
 }
 function matchesClass(item,selected){return selected==='ALL'||!item.cls||item.cls==='ALL'||item.cls===selected;}
+function matchesSearch(item,search){return !search||[item.title,item.subject,item.description].join(' ').toLowerCase().includes(search.toLowerCase());}
 
 /* ============ STUDY MATERIALS & EXAM PREP ============ */
 let learningUploadData='';
@@ -538,7 +557,9 @@ function renderLearningResources(c,category){
     : 'Notes and PDFs shared by your teachers for class study.';
   window._learningClassFilters=window._learningClassFilters||{};
   const classFilter=window._learningClassFilters[category]||'ALL';
-  const items=DB.studyMaterials.filter(x=>x.category===category && matchesClass(x,classFilter))
+  window._learningSearches=window._learningSearches||{};
+  const search=(window._learningSearches[category]||'').toLowerCase();
+  const items=DB.studyMaterials.filter(x=>x.category===category && matchesClass(x,classFilter) && (!search||[x.title,x.subject,x.description].join(' ').toLowerCase().includes(search)))
     .sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   const teacher=currentUser().role==='teacher';
   const composer=teacher?`
@@ -553,18 +574,19 @@ function renderLearningResources(c,category){
       <button class="btn btn-primary" onclick="saveLearningResource('${category}',this)">${isPrep?'Publish Guide':'Publish Material'}</button>
     </div>`:'';
   const empty=`<div class="empty" style="grid-column:1/-1;"><div class="e-icon">${isPrep?'✍️':'📚'}</div><div class="e-title">No ${isPrep?'exam prep guides':'study materials'} yet</div><div class="e-sub">${teacher?'Use the form above to share the first one.':'Your teachers have not shared anything here yet.'}</div></div>`;
-  c.innerHTML=`<div class="page-header"><h2>${title}</h2><p>${intro}</p></div><div class="page-toolbar"><label style="font-size:.78rem;font-weight:600;color:var(--ink3);">Filter by class</label><select onchange="window._learningClassFilters['${category}']=this.value;renderLearningResources(document.getElementById('content'),'${category}')" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">${classFilterOptions(classFilter)}</select></div>${composer}
+  c.innerHTML=`<div class="page-header"><h2>${title}</h2><p>${intro}</p></div><div class="page-toolbar"><div class="search-box"><span>🔎</span><input value="${esc(window._learningSearches[category]||'')}" placeholder="Search title, subject or description" oninput="window._learningSearches['${category}']=this.value;renderLearningResources(document.getElementById('content'),'${category}')"></div><label style="font-size:.78rem;font-weight:600;color:var(--ink3);">Filter by class</label><select onchange="window._learningClassFilters['${category}']=this.value;renderLearningResources(document.getElementById('content'),'${category}')" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">${classFilterOptions(classFilter)}</select></div>${composer}
     <div id="learningList" class="material-grid">${items.length?items.map(learningCardHTML).join(''):empty}</div>`;
 }
 
 function learningCardHTML(item){
   const author=userById(item.createdBy);
   const canManage=currentUser().role==='admin' || currentProfile.id===item.createdBy;
+  const commentCount=DB.materialComments.filter(c=>c.materialId===item.id).length;
   const kind=item.fileData?'PDF':'Text document';
   return `<article class="material-card"><div style="display:flex;justify-content:space-between;gap:10px;"><div class="material-icon">${item.fileData?'📄':'📝'}</div><span class="badge ${item.category==='exam-prep'?'b-series':'b-dpp'}">${kind}</span></div>
     <div><h3>${esc(item.title)}</h3><div class="ic-meta"><span>${esc(item.subject||'General')}</span><span>🏷️ ${item.cls==='ALL'||!item.cls?'All Classes':esc(className(item.cls))}</span><span>${esc(author?author.name:'Teacher')}</span></div></div>
     ${item.description?`<p>${esc(item.description)}</p>`:''}
-    <div class="ic-actions" style="margin-top:auto;">${item.text?`<button class="btn btn-ghost btn-xs" onclick="openLearningText('${item.id}')">Read</button>`:''}${item.fileData?`<a class="btn btn-primary btn-xs" href="${item.fileData}" download="${esc(item.fileName||'study-material.pdf')}">Download PDF</a>`:''}${canManage?`<button class="btn btn-blue btn-xs" onclick="openEditLearningResource('${item.id}')">Edit</button><button class="btn btn-danger btn-xs" onclick="deleteLearningResource('${item.id}')">Delete</button>`:''}</div></article>`;
+    <div class="ic-actions" style="margin-top:auto;">${item.text?`<button class="btn btn-ghost btn-xs" onclick="openLearningText('${item.id}')">Read</button>`:''}${item.fileData?`<a class="btn btn-primary btn-xs" href="${item.fileData}" download="${esc(item.fileName||'study-material.pdf')}">Download PDF</a>`:''}<button class="btn btn-teal btn-xs" onclick="openMaterialDiscussion('${item.id}')">Questions (${commentCount})</button>${canManage?`<button class="btn btn-blue btn-xs" onclick="openEditLearningResource('${item.id}')">Edit</button><button class="btn btn-danger btn-xs" onclick="deleteLearningResource('${item.id}')">Delete</button>`:''}</div></article>`;
 }
 
 function readLearningPdf(input){
@@ -648,11 +670,50 @@ async function saveEditedLearningResource(id,btn){
   }catch(e){toast('Could not save: '+friendlyError(e),'error');btn.disabled=false;btn.textContent='Save Changes';}
 }
 
+function openMaterialDiscussion(materialId){
+  const item=DB.studyMaterials.find(x=>x.id===materialId); if(!item)return;
+  const comments=DB.materialComments.filter(c=>c.materialId===materialId).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
+  const list=comments.length?comments.map(c=>`<div style="padding:10px 0;border-bottom:1px solid var(--border);"><strong style="font-size:.8rem;">${esc(userById(c.userId)?.name||'User')}</strong><span style="font-size:.68rem;color:var(--ink4);margin-left:7px;">${fmtDate(c.createdAt)}</span><div style="white-space:pre-wrap;font-size:.82rem;line-height:1.5;margin-top:4px;">${esc(c.text)}</div></div>`).join(''):'<div class="empty" style="padding:20px;"><div class="e-sub">No questions yet. Start the discussion.</div></div>';
+  const html=`<div class="overlay" id="materialDiscussionOverlay" style="z-index:600;"><div class="modal modal-wide"><h3>Questions & Discussion</h3><p class="modal-sub">${esc(item.title)}</p><div style="max-height:300px;overflow-y:auto;margin-bottom:14px;">${list}</div><div class="field"><label>Ask a question or reply</label><textarea id="materialCommentText" maxlength="2000" placeholder="Write your question or answer…" style="min-height:70px;"></textarea></div><div class="modal-btns"><button class="btn btn-ghost" onclick="document.getElementById('materialDiscussionOverlay').remove()">Close</button><button class="btn btn-primary" onclick="postMaterialComment('${materialId}',this)">Post</button></div></div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+async function postMaterialComment(materialId,btn){
+  const text=(document.getElementById('materialCommentText').value||'').trim();
+  if(!text){toast('Write a question or reply first','error');return;}
+  btn.disabled=true;
+  try{await dbFS.collection('studyMaterials').doc(materialId).collection('comments').add({materialId,userId:currentProfile.id,text,createdAt:nowISO()});document.getElementById('materialDiscussionOverlay').remove();toast('Posted','success');}
+  catch(e){toast('Could not post: '+friendlyError(e),'error');btn.disabled=false;}
+}
+
 function deleteLearningResource(id){
   openConfirm('Delete this resource?','Students will no longer be able to access it.',async()=>{try{await dbFS.collection('studyMaterials').doc(id).delete();toast('Resource deleted','success');}catch(e){toast('Could not delete: '+friendlyError(e),'error');}},'Delete');
 }
 
 /* ============ ADMIN: DASHBOARD ============ */
+/* ============ CLASS POLLS ============ */
+function renderPolls(c){
+  const u=currentUser();
+  if(!window._pollClassFilter)window._pollClassFilter='ALL';
+  const polls=DB.polls.filter(p=>matchesClass(p,window._pollClassFilter)).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  const composer=u.role==='teacher'?`<div class="card" style="margin-bottom:18px;"><div class="card-header"><h3>Create a quick class poll</h3></div><div class="field"><label>Question <span class="req">*</span></label><input id="pollQuestion" maxlength="220" placeholder="e.g. Which chapter should we revise next?"></div><div class="g2"><div class="field"><label>Option 1</label><input id="pollOpt1" maxlength="100"></div><div class="field"><label>Option 2</label><input id="pollOpt2" maxlength="100"></div><div class="field"><label>Option 3 (optional)</label><input id="pollOpt3" maxlength="100"></div><div class="field"><label>Target class</label><select id="pollClass">${classFilterOptions('ALL')}</select></div></div><button class="btn btn-primary" onclick="createPoll(this)">Publish Poll</button></div>`:'';
+  c.innerHTML=`<div class="page-header"><h2>Class Polls</h2><p>Quick questions and feedback for your classroom.</p></div><div class="page-toolbar"><label style="font-size:.78rem;font-weight:600;color:var(--ink3);">Filter by class</label><select onchange="window._pollClassFilter=this.value;renderPolls(document.getElementById('content'))" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">${classFilterOptions(window._pollClassFilter)}</select></div>${composer}<div class="material-grid">${polls.length?polls.map(pollCardHTML).join(''):'<div class="empty" style="grid-column:1/-1;"><div class="e-icon">🗳️</div><div class="e-title">No polls yet</div><div class="e-sub">Teachers can create the first class poll here.</div></div>'}</div>`;
+}
+function pollCardHTML(poll){
+  const votes=DB.pollVotes.filter(v=>v.pollId===poll.id);const mine=votes.find(v=>v.userId===currentProfile.id);const total=votes.length;const canManage=currentUser().role==='admin'||poll.createdBy===currentProfile.id;
+  const options=(poll.options||[]).map((option,i)=>{const count=votes.filter(v=>v.optionIndex===i).length;const pct=total?Math.round(count/total*100):0;return `<div style="margin:9px 0;"><button class="btn btn-ghost btn-sm" style="width:100%;justify-content:space-between;${mine||poll.closed?'cursor:default':''}" ${mine||poll.closed?'disabled':''} onclick="voteOnPoll('${poll.id}',${i},this)"><span>${esc(option)}</span><span>${mine?count+' ('+pct+'%)':'Vote'}</span></button>${mine?`<div class="progress-track" style="margin-top:4px;"><div class="progress-fill" style="width:${pct}%;"></div></div>`:''}</div>`;}).join('');
+  return `<article class="material-card"><div style="display:flex;justify-content:space-between;gap:8px;"><div class="material-icon">🗳️</div><span class="badge ${poll.closed?'b-draft':'b-live'}">${poll.closed?'Closed':'Open'}</span></div><div><h3>${esc(poll.question)}</h3><div class="ic-meta"><span>🏷️ ${poll.cls==='ALL'||!poll.cls?'All Classes':esc(className(poll.cls))}</span><span>${total} vote${total===1?'':'s'}</span></div></div><div>${options}</div>${canManage?`<div class="ic-actions" style="margin-top:auto;">${!poll.closed?`<button class="btn btn-gold btn-xs" onclick="closePoll('${poll.id}')">Close Poll</button>`:''}<button class="btn btn-danger btn-xs" onclick="deletePoll('${poll.id}')">Delete</button></div>`:''}</article>`;
+}
+async function createPoll(btn){
+  const question=(document.getElementById('pollQuestion').value||'').trim();const options=['pollOpt1','pollOpt2','pollOpt3'].map(id=>(document.getElementById(id).value||'').trim()).filter(Boolean);const cls=document.getElementById('pollClass').value;
+  if(!question||options.length<2){toast('Add a question and at least two options','error');return;}btn.disabled=true;
+  try{await dbFS.collection('polls').add({question,options,cls,createdBy:currentProfile.id,createdAt:nowISO(),closed:false});toast('Poll published','success');}catch(e){toast('Could not publish: '+friendlyError(e),'error');btn.disabled=false;}
+}
+async function voteOnPoll(pollId,optionIndex,btn){
+  btn.disabled=true;try{await dbFS.collection('polls').doc(pollId).collection('votes').doc(currentProfile.id).set({pollId,userId:currentProfile.id,optionIndex,createdAt:nowISO()});toast('Vote recorded','success');}catch(e){toast('Could not vote: '+friendlyError(e),'error');btn.disabled=false;}
+}
+async function closePoll(id){try{await dbFS.collection('polls').doc(id).update({closed:true,closedAt:nowISO()});toast('Poll closed','success');}catch(e){toast('Could not close poll: '+friendlyError(e),'error');}}
+function deletePoll(id){openConfirm('Delete this poll?','Votes for it will no longer be shown.',async()=>{try{await dbFS.collection('polls').doc(id).delete();toast('Poll deleted','success');}catch(e){toast('Could not delete poll: '+friendlyError(e),'error');}},'Delete');}
+
 function renderAdminDashboard(c){
   const totalUsers=DB.users.filter(u=>u.role!=='admin').length;
   const pending=DB.users.filter(u=>u.status==='pending').length;
@@ -887,9 +948,10 @@ function removeClass(id,inUse){
 /* ============ ADMIN: ALL TESTS ============ */
 function renderAllTests(c){
   if(!window._allTestsClassFilter) window._allTestsClassFilter='ALL';
-  c.innerHTML=`<div class="page-header"><h2>All Tests &amp; DPPs</h2><p>Every test created across PrepHub.</p></div><div class="page-toolbar"><label style="font-size:.78rem;font-weight:600;color:var(--ink3);">Filter by class</label><select onchange="window._allTestsClassFilter=this.value;renderAllTests(document.getElementById('content'))" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">${classFilterOptions(window._allTestsClassFilter)}</select></div><div id="allTestsList"></div>`;
+  if(window._allTestsSearch===undefined)window._allTestsSearch='';
+  c.innerHTML=`<div class="page-header"><h2>All Tests &amp; DPPs</h2><p>Every test created across PrepHub.</p></div><div class="page-toolbar"><div class="search-box"><span>🔎</span><input value="${esc(window._allTestsSearch)}" placeholder="Search tests or subjects" oninput="window._allTestsSearch=this.value;renderAllTests(document.getElementById('content'))"></div><label style="font-size:.78rem;font-weight:600;color:var(--ink3);">Filter by class</label><select onchange="window._allTestsClassFilter=this.value;renderAllTests(document.getElementById('content'))" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">${classFilterOptions(window._allTestsClassFilter)}</select></div><div id="allTestsList"></div>`;
   const wrap=document.getElementById('allTestsList');
-  const tests=DB.tests.filter(t=>matchesClass(t,window._allTestsClassFilter));
+  const tests=DB.tests.filter(t=>matchesClass(t,window._allTestsClassFilter)&&matchesSearch(t,window._allTestsSearch));
   if(!tests.length){wrap.innerHTML='<div class="empty"><div class="e-icon">📝</div><div class="e-title">No tests for this class</div></div>';return;}
   wrap.innerHTML=[...tests].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(t=>testCardHTML(t,true)).join('');
 }
@@ -978,9 +1040,10 @@ function editTest(id){goPage('edittest',{testId:id});}
 function renderMyTests(c){
   const u=currentUser();
   if(!window._myTestsClassFilter) window._myTestsClassFilter='ALL';
-  const mine=DB.tests.filter(t=>t.createdBy===u.id && matchesClass(t,window._myTestsClassFilter));
+  if(window._myTestsSearch===undefined)window._myTestsSearch='';
+  const mine=DB.tests.filter(t=>t.createdBy===u.id && matchesClass(t,window._myTestsClassFilter)&&matchesSearch(t,window._myTestsSearch));
   c.innerHTML=`<div class="page-header"><h2>My Tests &amp; DPPs</h2><p>Everything you've created.</p></div>
-  <div class="page-toolbar"><button class="btn btn-primary" onclick="goPage('createtest')">➕ Create New Test / DPP</button><label style="font-size:.78rem;font-weight:600;color:var(--ink3);">Filter by class</label><select onchange="window._myTestsClassFilter=this.value;renderMyTests(document.getElementById('content'))" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">${classFilterOptions(window._myTestsClassFilter)}</select></div>
+  <div class="page-toolbar"><button class="btn btn-primary" onclick="goPage('createtest')">➕ Create New Test / DPP</button><div class="search-box"><span>🔎</span><input value="${esc(window._myTestsSearch)}" placeholder="Search tests or subjects" oninput="window._myTestsSearch=this.value;renderMyTests(document.getElementById('content'))"></div><label style="font-size:.78rem;font-weight:600;color:var(--ink3);">Filter by class</label><select onchange="window._myTestsClassFilter=this.value;renderMyTests(document.getElementById('content'))" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">${classFilterOptions(window._myTestsClassFilter)}</select></div>
   <div id="myTestsList"></div>`;
   const wrap=document.getElementById('myTestsList');
   wrap.innerHTML= mine.length? [...mine].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(t=>testCardHTML(t,false)).join('') : '<div class="empty"><div class="e-icon">📝</div><div class="e-title">No tests yet</div></div>';
@@ -997,7 +1060,7 @@ function renderCreateTest(c){
     // Always start a clean form for "Create Test / DPP" — this page is only
     // re-rendered on an actual navigation (background syncs skip it), so there's
     // no risk of wiping in-progress edits by resetting here.
-    draftTest={id:uid('test'),title:'',type:'DPP',subject:'',school:'ALL',cls:'ALL',duration:0,questions:[],published:false,createdBy:currentUser().id,createdAt:nowISO()};
+    draftTest={id:uid('test'),title:'',type:'DPP',subject:'',school:'ALL',cls:'ALL',duration:0,publishAt:'',dueAt:'',questions:[],published:false,createdBy:currentUser().id,createdAt:nowISO()};
   }
   const schoolOpts=['<option value="ALL">All Schools</option>'].concat(DB.schools.map(s=>'<option value="'+s.id+'"'+(draftTest.school===s.id?' selected':'')+'>'+esc(s.name)+'</option>')).join('');
   const classOpts=['<option value="ALL">All Classes</option>'].concat(DB.classes.map(cl=>'<option value="'+cl.id+'"'+(draftTest.cls===cl.id?' selected':'')+'>'+esc(cl.name)+'</option>')).join('');
@@ -1016,7 +1079,7 @@ function renderCreateTest(c){
       <div class="field"><label>Target School</label><select id="tSchool">${schoolOpts}</select></div>
       <div class="field"><label>Target Class</label><select id="tClass">${classOpts}</select></div>
     </div>
-    <div class="field" style="max-width:220px;"><label>Duration (minutes, 0 = no limit)</label><input type="number" id="tDuration" min="0" value="${draftTest.duration||0}"></div>
+    <div class="g3"><div class="field"><label>Duration (minutes, 0 = no limit)</label><input type="number" id="tDuration" min="0" value="${draftTest.duration||0}"></div><div class="field"><label>Schedule publish (optional)</label><input type="datetime-local" id="tPublishAt" value="${draftTest.publishAt?String(draftTest.publishAt).slice(0,16):''}"><div class="hint">Students cannot see it before this time.</div></div><div class="field"><label>Deadline (optional)</label><input type="datetime-local" id="tDueAt" value="${draftTest.dueAt?String(draftTest.dueAt).slice(0,16):''}"><div class="hint">Shown to students as a due date.</div></div></div>
   </div>
 
   <div class="card" style="margin-bottom:16px;">
@@ -1106,6 +1169,8 @@ function saveTestDraft(publish){
   draftTest.school=document.getElementById('tSchool').value;
   draftTest.cls=document.getElementById('tClass').value;
   draftTest.duration=parseInt(document.getElementById('tDuration').value)||0;
+  draftTest.publishAt=document.getElementById('tPublishAt').value||'';
+  draftTest.dueAt=document.getElementById('tDueAt').value||'';
   if(!draftTest.title){toast('Please enter a title','error');return;}
   if(!draftTest.questions.length){toast('Add at least one question','error');return;}
   for(const q of draftTest.questions){
@@ -1149,8 +1214,9 @@ function renderStudentDashboard(c){
     ${avail.length? avail.slice(0,4).map(t=>studentTestCard(t)).join(''):'<div class="empty"><div class="e-icon">🎉</div><div class="e-title">All caught up!</div><div class="e-sub">No pending tests right now.</div></div>'}
   </div>`;
 }
+function isTestLive(t){return !!t.published && (!t.publishAt || new Date(t.publishAt)<=new Date());}
 function availableTestsFor(u){
-  return DB.tests.filter(t=> t.published && (t.school==='ALL'||t.school===u.school) && (t.cls==='ALL'||t.cls===u.cls));
+  return DB.tests.filter(t=> isTestLive(t) && (t.school==='ALL'||t.school===u.school) && (t.cls==='ALL'||t.cls===u.cls));
 }
 function hasAttempted(userId,testId){return DB.attempts.some(a=>a.userId===userId && a.testId===testId);}
 function avgScorePctForUser(userId){
@@ -1177,6 +1243,7 @@ function studentTestCard(t){
           <span>❓ ${t.questions.length} Qs</span>
           <span>⏱ ${t.duration>0?t.duration+' min':'No limit'}</span>
           <span>💯 ${maxScoreOf(t)} marks</span>
+          ${t.dueAt?'<span>📅 Due '+fmtDate(t.dueAt)+'</span>':''}
         </div>
       </div>
     </div>
@@ -1194,13 +1261,15 @@ function viewAttemptReview(testId){
 }
 
 /* ============ STUDENT: AVAILABLE TESTS ============ */
-function allPublishedTests(){ return DB.tests.filter(t=>t.published); }
+function allPublishedTests(){ return DB.tests.filter(t=>isTestLive(t)); }
 function renderAvailableTests(c){
   const u=currentUser();
   if(!window._availScope) window._availScope='mine'; // 'mine' | 'all'
   if(!window._availClassFilter) window._availClassFilter='ALL';
+  if(window._availSearch===undefined)window._availSearch='';
   c.innerHTML=`<div class="page-header"><h2>Available Tests</h2><p>Tests and DPPs assigned to ${esc(className(u.cls))}, ${esc(schoolName(u.school))}.</p></div>
   <div class="page-toolbar">
+    <div class="search-box"><span>🔎</span><input value="${esc(window._availSearch)}" placeholder="Search tests or subjects" oninput="window._availSearch=this.value;renderAvailableTests(document.getElementById('content'))"></div>
     <select id="availScopeSel" onchange="window._availScope=this.value;renderAvailableTests(document.getElementById('content'))" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">
       <option value="mine" ${window._availScope==='mine'?'selected':''}>My Class Only</option>
       <option value="all" ${window._availScope==='all'?'selected':''}>All Tests (every class)</option>
@@ -1211,7 +1280,7 @@ function renderAvailableTests(c){
   </div>
   <div id="availList"></div>`;
   const baseAvail = window._availScope==='all' ? allPublishedTests() : availableTestsFor(u);
-  const avail=baseAvail.filter(t=>matchesClass(t,window._availClassFilter));
+  const avail=baseAvail.filter(t=>matchesClass(t,window._availClassFilter)&&matchesSearch(t,window._availSearch));
   document.getElementById('availList').innerHTML = avail.length? [...avail].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(t=>studentTestCard(t)).join('') : '<div class="empty"><div class="e-icon">📭</div><div class="e-title">No tests assigned yet</div></div>';
 }
 
@@ -1529,6 +1598,11 @@ function teacherLeaderboard(){
 }
 
 /* ============ STUDENT ANALYTICS ============ */
+function renderStudentProgress(c){
+  const u=currentUser();const atts=userAttempts(u.id);const materials=DB.studyMaterials.filter(m=>matchesClass(m,u.cls));const upcoming=availableTestsFor(u).filter(t=>t.dueAt&&new Date(t.dueAt)>=new Date()).sort((a,b)=>new Date(a.dueAt)-new Date(b.dueAt));
+  c.innerHTML=`<div class="page-header"><h2>My Progress</h2><p>Keep track of your study work, performance, and upcoming deadlines.</p></div><div class="g4" style="margin-bottom:20px;">${statCard('🧾','Tests Attempted',atts.length,'var(--blue)','var(--blue-lt)')}${statCard('📊','Average Score',avgScorePctForUser(u.id)+'%','var(--teal)','var(--teal-lt)')}${statCard('📚','Class Resources',materials.length,'var(--purple)','var(--purple-lt)')}${statCard('📅','Upcoming Deadlines',upcoming.length,'var(--orange)','var(--orange-lt)')}</div><div class="g2"><div class="card"><div class="card-header"><h3>Upcoming Deadlines</h3><button class="btn btn-ghost btn-xs" onclick="goPage('available')">View Tests</button></div>${upcoming.length?upcoming.slice(0,6).map(t=>`<div style="padding:10px 0;border-bottom:1px solid var(--border);"><strong>${esc(t.title)}</strong><div class="hint">Due ${fmtDate(t.dueAt)}</div></div>`).join(''):'<div class="empty" style="padding:24px;"><div class="e-sub">No upcoming test deadlines.</div></div>'}</div><div class="card"><div class="card-header"><h3>Subject Progress</h3><button class="btn btn-ghost btn-xs" onclick="goPage('analytics')">Full Analytics</button></div>${subjectAverages(atts)}</div></div>`;
+}
+
 function renderStudentAnalytics(c){
   const u=currentUser();
   const atts=[...userAttempts(u.id)].sort((a,b)=>new Date(a.submittedAt)-new Date(b.submittedAt));
