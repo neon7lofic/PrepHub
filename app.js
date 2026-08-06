@@ -34,13 +34,14 @@ auth.setPersistence(firebase.auth.Auth.Persistence.SESSION).catch(()=>{});
    All the render functions below still read DB.users / DB.tests / etc. synchronously
    exactly like before — only the write path (create/update/delete) goes through Firestore.
 */
-let DB={users:[],schools:[],classes:[],tests:[],attempts:[],tickets:[],conversations:[],groupChats:[],groupInvites:[],studyMaterials:[],polls:[],pollVotes:[],materialComments:[]};
+let DB={users:[],directory:[],schools:[],classes:[],tests:[],attempts:[],tickets:[],conversations:[],groupChats:[],groupInvites:[],studyMaterials:[],polls:[],pollVotes:[],materialComments:[]};
 let currentProfile=null;
 let uiState={sidebarCollapsed:false, page:'dashboard', pageParams:{}};
 let privateListeners=[], publicListeners=[];
 let studyMaterialsListener=null, pollsListener=null;
 let materialCommentListeners={}, pollVoteListeners={};
 let privatePermissionHandled=false;
+let directoryBackfillStarted=false;
 
 function uid(pre){return (pre||'id')+'_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4);}
 function nowISO(){return new Date().toISOString();}
@@ -85,6 +86,18 @@ function localUpdate(coll,id,patch){
 }
 function localRemove(coll,id){ DB[coll]=DB[coll].filter(x=>x.id!==id); }
 
+async function backfillUserDirectory(){
+  if(directoryBackfillStarted||!currentProfile||currentProfile.role!=='admin')return;
+  directoryBackfillStarted=true;
+  try{
+    const batch=dbFS.batch();
+    DB.users.forEach(u=>batch.set(dbFS.collection('userDirectory').doc(u.id),{
+      name:u.name||'',role:u.role||'',school:u.school||'',cls:u.cls||'',status:u.status||'pending'
+    },{merge:true}));
+    await batch.commit();
+  }catch(e){ directoryBackfillStarted=false; toast('Could not prepare the secure contact directory: '+friendlyError(e),'error'); }
+}
+
 /* ---- Public data needed before login (schools/classes for the registration form) ---- */
 function attachPublicListeners(){
   publicListeners.push(dbFS.collection('schools').onSnapshot(snap=>{
@@ -114,6 +127,7 @@ function attachPrivateListeners(){
     DB.users = currentProfile.role==='admin'
       ? snap.docs.map(d=>({id:d.id,...d.data()}))
       : (snap.exists ? [{id:snap.id,...snap.data()}] : []);
+    if(currentProfile.role==='admin') backfillUserDirectory();
     // If this account gets suspended, rejected, or deleted mid-session, sign out.
     if(currentProfile && !DB.users.some(u=>u.id===currentProfile.id && u.status==='approved')){
       toast('Your account access has changed. Please log in again.','warn');
@@ -122,6 +136,15 @@ function attachPrivateListeners(){
     }
     refreshUI();
   }, e=>handlePrivateSyncError('profile',e)));
+  // Contact cards live separately from full profiles, so messaging never needs
+  // access to email addresses, phone numbers, or approval history.
+  const directoryQuery=currentProfile.role==='admin'
+    ? dbFS.collection('userDirectory')
+    : dbFS.collection('userDirectory').where('school','==',currentProfile.school||'__none__').where('status','==','approved');
+  privateListeners.push(directoryQuery.onSnapshot(snap=>{
+    DB.directory=snap.docs.map(d=>({id:d.id,...d.data()}));
+    refreshUI();
+  }, e=>handlePrivateSyncError('directory',e)));
   privateListeners.push(dbFS.collection('tests').onSnapshot(snap=>{
     DB.tests=snap.docs.map(d=>({id:d.id,...d.data()}));
     refreshUI();
@@ -259,7 +282,8 @@ auth.onAuthStateChanged(async (user)=>{
   if(!user){
     currentProfile=null;
     detachPrivateListeners();
-    DB.users=[];DB.tests=[];DB.attempts=[];DB.tickets=[];DB.groupChats=[];DB.groupInvites=[];DB.studyMaterials=[];DB.polls=[];DB.pollVotes=[];DB.materialComments=[];
+    DB.users=[];DB.directory=[];DB.tests=[];DB.attempts=[];DB.tickets=[];DB.groupChats=[];DB.groupInvites=[];DB.studyMaterials=[];DB.polls=[];DB.pollVotes=[];DB.materialComments=[];
+    directoryBackfillStarted=false;
     document.getElementById('shell').classList.remove('show');
     document.getElementById('authScreen').style.display='flex';
     return;
@@ -354,6 +378,7 @@ async function doRegister(){
     const cred=await auth.createUserWithEmailAndPassword(email,pw);
     const baseProfile={name,email,school,cls,phone,subject:regRole==='teacher'?subject:'',createdAt:nowISO()};
     const userRef=dbFS.collection('users').doc(cred.user.uid);
+    const directoryRef=dbFS.collection('userDirectory').doc(cred.user.uid);
     const bootstrapRef=dbFS.collection('system').doc('bootstrap');
     let becameAdmin=false;
     try{
@@ -367,9 +392,11 @@ async function doRegister(){
         if(!bs.exists || bs.data().adminCreated!==true){
           becameAdmin=true;
           tx.set(userRef,{...baseProfile,role:'admin',status:'approved'});
+          tx.set(directoryRef,{name,role:'admin',school,cls,status:'approved'});
           tx.set(bootstrapRef,{adminCreated:true,adminUid:cred.user.uid,adminEmail:email,at:nowISO()});
         }else{
           tx.set(userRef,{...baseProfile,role:regRole,status:'pending'});
+          tx.set(directoryRef,{name,role:regRole,school,cls,status:'pending'});
         }
       });
     }catch(profileErr){
@@ -552,7 +579,11 @@ function renderNotFound(c){c.innerHTML='<div class="empty"><div class="e-icon">�
 /* ============ HELPERS: DATA ============ */
 function schoolName(id){const s=DB.schools.find(x=>x.id===id);return s?s.name:'—';}
 function className(id){const c=DB.classes.find(x=>x.id===id);return c?c.name:'—';}
-function userById(id){return DB.users.find(x=>x.id===id);}
+function userById(id){return DB.users.find(x=>x.id===id)||DB.directory.find(x=>x.id===id);}
+function contactDirectory(){
+  const me=currentUser();
+  return DB.directory.filter(u=>u.status==='approved'&&u.id!==me.id&&(me.role==='admin'||u.school===me.school));
+}
 function testById(id){return DB.tests.find(x=>x.id===id);}
 function testAttempts(testId){return DB.attempts.filter(a=>a.testId===testId);}
 function userAttempts(userId){return DB.attempts.filter(a=>a.userId===userId);}
@@ -873,7 +904,10 @@ function renderApprovals(c){
 async function approveUser(id){
   const u=userById(id); if(!u) return;
   try{
-    await dbFS.collection('users').doc(id).update({status:'approved'});
+    const batch=dbFS.batch();
+    batch.update(dbFS.collection('users').doc(id),{status:'approved'});
+    batch.set(dbFS.collection('userDirectory').doc(id),{name:u.name,role:u.role,school:u.school||'',cls:u.cls||'',status:'approved'},{merge:true});
+    await batch.commit();
     localUpdate('users',id,{status:'approved'});
     toast(u.name+' approved','success'); refreshUI();
   }catch(e){ toast('Failed to approve: '+friendlyError(e),'error'); }
@@ -882,7 +916,10 @@ function rejectUser(id){
   const u=userById(id); if(!u) return;
   openConfirm('Reject this user?','This will mark the registration as rejected.',async()=>{
     try{
-      await dbFS.collection('users').doc(id).update({status:'rejected'});
+      const batch=dbFS.batch();
+      batch.update(dbFS.collection('users').doc(id),{status:'rejected'});
+      batch.set(dbFS.collection('userDirectory').doc(id),{status:'rejected'},{merge:true});
+      await batch.commit();
       localUpdate('users',id,{status:'rejected'});
       toast(u.name+' rejected','warn'); refreshUI();
     }catch(e){ toast('Failed to reject: '+friendlyError(e),'error'); }
@@ -932,7 +969,10 @@ function renderUsersTable(){
 }
 async function suspendUser(id){
   try{
-    await dbFS.collection('users').doc(id).update({status:'rejected'});
+    const batch=dbFS.batch();
+    batch.update(dbFS.collection('users').doc(id),{status:'rejected'});
+    batch.set(dbFS.collection('userDirectory').doc(id),{status:'rejected'},{merge:true});
+    await batch.commit();
     localUpdate('users',id,{status:'rejected'});
     toast('User suspended','warn'); refreshUI();
   }catch(e){ toast('Failed: '+friendlyError(e),'error'); }
@@ -942,6 +982,7 @@ function deleteUser(id){
     try{
       const batch=dbFS.batch();
       batch.delete(dbFS.collection('users').doc(id));
+      batch.delete(dbFS.collection('userDirectory').doc(id));
       const attSnap=await dbFS.collection('attempts').where('userId','==',id).get();
       attSnap.forEach(d=>batch.delete(d.ref));
       await batch.commit();
@@ -1756,7 +1797,10 @@ async function saveProfile(){
   const subjEl=document.getElementById('pSubject');
   if(subjEl) patch.subject=subjEl.value.trim();
   try{
-    await dbFS.collection('users').doc(u.id).update(patch);
+    const batch=dbFS.batch();
+    batch.update(dbFS.collection('users').doc(u.id),patch);
+    batch.set(dbFS.collection('userDirectory').doc(u.id),{name},{merge:true});
+    await batch.commit();
     localUpdate('users',u.id,patch);
     toast('Profile updated','success');
     document.getElementById('sbName').textContent=name;
@@ -1853,7 +1897,10 @@ async function saveProfileModalInfo(){
   const subjEl=document.getElementById('pmFieldSubject');
   if(subjEl) patch.subject=subjEl.value.trim();
   try{
-    await dbFS.collection('users').doc(u.id).update(patch);
+    const batch=dbFS.batch();
+    batch.update(dbFS.collection('users').doc(u.id),patch);
+    batch.set(dbFS.collection('userDirectory').doc(u.id),{name},{merge:true});
+    await batch.commit();
     localUpdate('users',u.id,patch);
     document.getElementById('sbName').textContent=name;
     document.getElementById('sbAvatar').textContent=name.charAt(0).toUpperCase();
@@ -2321,7 +2368,7 @@ async function declineGroupInvite(id){
 }
 function openNewChatPicker(){
   const me=currentUser();
-  const others=DB.users.filter(u=>u.status==='approved' && u.id!==me.id);
+  const others=contactDirectory();
   const pickerHTML=`
   <div class="overlay" id="newChatOverlay" style="z-index:600;">
     <div class="modal modal-wide">
@@ -2349,7 +2396,7 @@ function filterNewChatList(){
 /* ---- New Group / Class group modal ---- */
 function openNewGroupModal(){
   const me=currentUser();
-  const others=DB.users.filter(u=>u.status==='approved' && u.id!==me.id);
+  const others=contactDirectory();
   const classOpts=['<option value="">— pick a class to auto-add everyone in it —</option>'].concat(
     DB.classes.map(cl=>'<option value="'+cl.id+'">'+esc(cl.name)+'</option>')
   ).join('');
@@ -2593,7 +2640,7 @@ function renderGsAddList(groupId){
   const g=DB.groupChats.find(x=>x.id===groupId); if(!g) return;
   const q=(document.getElementById('gsAddSearch')?.value||'').toLowerCase();
   const already=new Set([...(g.participants||[]),...(g.invites||[])]);
-  const list=DB.users.filter(u=>u.status==='approved' && !already.has(u.id) && u.name.toLowerCase().includes(q));
+  const list=contactDirectory().filter(u=>!already.has(u.id) && u.name.toLowerCase().includes(q));
   wrap.innerHTML=list.length? list.slice(0,20).map(u=>`<div class="item-card" style="cursor:pointer;margin-bottom:4px;padding:6px 8px;" onclick="inviteMoreToGroup('${groupId}','${u.id}')">
     <span style="font-size:.8rem;">${esc(u.name)} <span style="color:var(--ink4);font-size:.7rem;">(${esc(u.role)})</span></span>
   </div>`).join('') : '<div class="hint" style="padding:4px 8px;">No matches.</div>';
