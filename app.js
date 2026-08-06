@@ -500,6 +500,7 @@ function buildNav(){
       {p:'materials',icon:'📚',label:'Study Materials'},
       {p:'examprep',icon:'✍️',label:'Exam Prep Guides'},
       {p:'polls',icon:'🗳️',label:'Class Polls'},
+      {p:'aidoubt',icon:'🤖',label:'AI Doubt Solving',badgeText:'Soon'},
       {sec:'Support'},
       {p:'supporttickets',icon:'🆘',label:'Support Tickets',badge:openTicketCount()||null},
       {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
@@ -518,6 +519,7 @@ function buildNav(){
       {p:'materials',icon:'📚',label:'Study Materials'},
       {p:'examprep',icon:'✍️',label:'Exam Prep Guides'},
       {p:'polls',icon:'🗳️',label:'Class Polls'},
+      {p:'aidoubt',icon:'🤖',label:'AI Doubt Solving',badgeText:'Soon'},
       {sec:'Support'},
       {p:'support',icon:'🆘',label:'Help & Support'},
       {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
@@ -537,6 +539,7 @@ function buildNav(){
       {p:'materials',icon:'📚',label:'Study Materials'},
       {p:'examprep',icon:'✍️',label:'Exam Prep Guides'},
       {p:'polls',icon:'🗳️',label:'Class Polls'},
+      {p:'aidoubt',icon:'🤖',label:'AI Doubt Solving',badgeText:'Soon'},
       {sec:'Support'},
       {p:'support',icon:'🆘',label:'Help & Support'},
       {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
@@ -547,7 +550,8 @@ function buildNav(){
   const nav=document.getElementById('navArea');
   nav.innerHTML=items.map(it=>{
     if(it.sec!==undefined) return it.sec? '<div class="sb-section">'+it.sec+'</div>':'<div class="sb-divider"></div>';
-    return '<div class="sb-item" data-page="'+it.p+'" onclick="goPage(\''+it.p+'\')"><div class="sb-icon">'+it.icon+'</div><div class="sb-label">'+it.label+'</div>'+(it.badge?'<div class="sb-badge">'+it.badge+'</div>':'')+'</div>';
+    const badgeHTML = it.badgeText ? '<div class="sb-badge sb-badge-soon">'+it.badgeText+'</div>' : (it.badge?'<div class="sb-badge">'+it.badge+'</div>':'');
+    return '<div class="sb-item" data-page="'+it.p+'" onclick="goPage(\''+it.p+'\')"><div class="sb-icon">'+it.icon+'</div><div class="sb-label">'+it.label+'</div>'+badgeHTML+'</div>';
   }).join('');
 }
 function markActiveNav(page){
@@ -561,7 +565,7 @@ function goPage(page,params){
   const titles={dashboard:'Dashboard',approvals:'Pending Approvals',users:'Manage Users',registry:'Schools & Classes',
     alltests:'All Tests',analytics:'Analytics',createtest:'Create Test / DPP',mytests:'My Tests',available:'Available Tests',
     results:'My Results',profile:'My Profile',testrunner:'Attempt Test',testreview:'Test Review',testanalytics:'Test Analytics',edittest:'Edit Test',
-    support:'Help & Support',supporttickets:'Support Tickets',messages:'Messages',materials:'Study Materials',examprep:'Exam Prep Guides',polls:'Class Polls',progress:'My Progress'};
+    support:'Help & Support',supporttickets:'Support Tickets',messages:'Messages',materials:'Study Materials',examprep:'Exam Prep Guides',polls:'Class Polls',progress:'My Progress',aidoubt:'AI Doubt Solving'};
   document.getElementById('pageTitle').textContent=titles[page]||'PrepHub';
   render();
 }
@@ -590,12 +594,28 @@ function render(){
     materials: (el)=>renderLearningResources(el,'material'),
     examprep: (el)=>renderLearningResources(el,'exam-prep'),
     polls: renderPolls,
-    progress: renderStudentProgress
+    progress: renderStudentProgress,
+    aidoubt: renderAiDoubt
   };
   c.innerHTML='';
   (fns[uiState.page]||renderNotFound)(c);
 }
 function renderNotFound(c){c.innerHTML='<div class="empty"><div class="e-icon">🤷</div><div class="e-title">Page not found</div></div>';}
+
+/* ---- AI Doubt Solving: placeholder page, feature coming soon ---- */
+function renderAiDoubt(c){
+  c.innerHTML=`
+  <div class="page-header"><h2>🤖 AI Doubt Solving</h2><p>Ask a question, get an instant AI-powered explanation.</p></div>
+  <div class="card" style="text-align:center;padding:56px 24px;">
+    <div style="font-size:3rem;margin-bottom:14px;">🚧</div>
+    <div style="font-family:'Crimson Pro',serif;font-size:1.5rem;font-weight:600;color:var(--ink);margin-bottom:8px;">In Development — Coming Soon</div>
+    <div style="color:var(--ink3);font-size:.88rem;max-width:440px;margin:0 auto;line-height:1.6;">
+      We're building an AI doubt-solving assistant so you'll be able to ask questions
+      here and get instant, step-by-step explanations. Hang tight — it's on the way!
+    </div>
+    <div style="margin-top:22px;"><span class="badge b-pending">⏳ Coming Soon</span></div>
+  </div>`;
+}
 
 /* ============ HELPERS: DATA ============ */
 function schoolName(id){const s=DB.schools.find(x=>x.id===id);return s?s.name:'—';}
