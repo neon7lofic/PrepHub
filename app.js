@@ -613,7 +613,7 @@ function renderAiDoubt(c){
       We're building an AI doubt-solving assistant so you'll be able to ask questions
       here and get instant, step-by-step explanations. Hang tight — it's on the way!
     </div>
-    <div style="margin-top:22px;"><span class="badge b-pending">⏳ Coming Soon</span></div>
+    <div style="margin-top:22px;"><span class="badge b-pending">⏳ Coming Soon (It may take upto months)</span></div>
   </div>`;
 }
 
