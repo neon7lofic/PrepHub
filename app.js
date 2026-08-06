@@ -1,4 +1,15 @@
-
+/* ============ FIREBASE SETUP ============
+   1. Go to https://console.firebase.google.com -> Add project
+   2. Project settings -> Add a Web App -> copy the config object -> paste it below
+   3. Build > Authentication -> Get started -> Sign-in method -> enable "Email/Password"
+   4. Build > Firestore Database -> Create database (any region, start in production mode)
+   5. Firestore -> Rules -> paste the contents of firestore.rules (provided alongside this file) -> Publish
+   6. Open this HTML file. Register your own account first (any role), then in the Firebase
+      Console -> Firestore -> users -> open your user document -> manually set role:"admin"
+      and status:"approved". That's your one-time admin bootstrap step. Every other rule
+      already correctly requires admin approval, so this manual step is done on purpose —
+      it's what keeps random visitors from being able to grant themselves admin.
+*/
 const firebaseConfig = {
   apiKey: "AIzaSyCt6s5nMB4bS6_tKYOu8U5ERH7-Y9yP9qU",
   authDomain: "prephub-f9dbd.firebaseapp.com",
@@ -51,7 +62,8 @@ function friendlyError(e){
   return map[e.code] || e.message || 'Something went wrong.';
 }
 function handlePrivateSyncError(area,e){
-
+  // One denied Firestore request can make several listeners fail at once.
+  // Show the actual account-state problem once instead of stacking popups.
   if(e && e.code==='permission-denied'){
     if(privatePermissionHandled)return;
     privatePermissionHandled=true;
@@ -61,7 +73,8 @@ function handlePrivateSyncError(area,e){
   toast('Sync error ('+area+'): '+friendlyError(e),'error');
 }
 
-
+// Optimistic local-cache helpers so the UI updates instantly after a write succeeds,
+// without waiting for the round-trip through the onSnapshot listener.
 function localUpsert(coll,id,data){
   const arr=DB[coll]; const idx=arr.findIndex(x=>x.id===id);
   const obj={id,...data};
@@ -103,7 +116,10 @@ function attachPublicListeners(){
 function attachPrivateListeners(){
   detachPrivateListeners();
   privatePermissionHandled=false;
-
+  // Do not make every regular user subscribe to the complete user directory at
+  // login. Besides exposing more data than the dashboard needs, that query is
+  // rejected by common Firestore rules that only allow a user to read their own
+  // profile. Admins still receive the full live directory for account management.
   const usersQuery = currentProfile.role==='admin'
     ? dbFS.collection('users')
     : dbFS.collection('users').doc(currentProfile.id);
@@ -120,7 +136,12 @@ function attachPrivateListeners(){
     }
     refreshUI();
   }, e=>handlePrivateSyncError('profile',e)));
- 
+  // Contact cards live separately from full profiles, so messaging never needs
+  // access to email addresses, phone numbers, or approval history. Visibility
+  // is NOT school-scoped (see firestore.rules) — the New Message picker lets
+  // anyone message anyone, so every approved user needs the full directory.
+  // Admins additionally see non-approved cards (pending/rejected) for account
+  // management, so they still get the unfiltered collection.
   function onDirectoryUpdated(){
     refreshUI();
     if(uiState.page==='messages'){
@@ -149,14 +170,24 @@ function attachPrivateListeners(){
     DB.attempts=snap.docs.map(d=>({id:d.id,...d.data()}));
     refreshUI();
   }, e=>handlePrivateSyncError('attempts',e)));
-
+  // The tickets rule allows a read either if you're an admin, or if it's your
+  // OWN ticket (resource.data.userId == your uid). Firestore can only allow an
+  // unfiltered list() query when the rule can be proven safe purely from what
+  // the query itself constrains — for a non-admin, "is it my own ticket" isn't
+  // something an unfiltered query can prove, so listening to the whole
+  // collection with no filter got rejected with permission-denied for every
+  // teacher/student (admins "worked" only because isAdmin() alone doesn't
+  // depend on resource data). Query the right thing for each role instead:
+  // admins listen to everything, everyone else only to their own tickets.
   const ticketsQuery = (currentProfile.role==='admin')
     ? dbFS.collection('tickets')
     : dbFS.collection('tickets').where('userId','==',currentProfile.id);
   privateListeners.push(ticketsQuery.onSnapshot(snap=>{
     DB.tickets=snap.docs.map(d=>({id:d.id,...d.data()}));
     buildNav();
-   
+    // 'support' and 'supporttickets' sit in refreshUI's skip list (a full page
+    // re-render there would blank out whatever reply someone is mid-typing), so
+    // patch just the ticket list/cards directly instead, same pattern as messages.
     if(uiState.page==='support'){
       const u=currentUser();
       const wrap=document.getElementById('myTicketsWrap');
@@ -173,14 +204,19 @@ function attachPrivateListeners(){
   privateListeners.push(dbFS.collection('conversations').where('participants','array-contains',currentProfile.id).onSnapshot(snap=>{
     DB.conversations=snap.docs.map(d=>({id:d.id,...d.data()}));
     buildNav();
-  
+    // Messages is excluded from refreshUI's full-page re-render (it would wipe
+    // whatever the person is mid-typing into the message box), so update just
+    // the conversation list sidebar directly instead.
     if(uiState.page==='messages') renderConvoList();
   }, e=>handlePrivateSyncError('messages',e)));
   privateListeners.push(dbFS.collection('groupChats').where('participants','array-contains',currentProfile.id).onSnapshot(snap=>{
     DB.groupChats=snap.docs.map(d=>({id:d.id,...d.data()}));
     if(uiState.page==='messages') renderGroupList();
   }, e=>handlePrivateSyncError('groups',e)));
- 
+  // Groups I've been invited to but haven't accepted/declined yet — a separate
+  // query since it's keyed off a different array field (`invites`, not
+  // `participants`). Nobody is ever dropped straight into a group's member
+  // list; this is what lets them see the invite and accept or decline it.
   privateListeners.push(dbFS.collection('groupChats').where('invites','array-contains',currentProfile.id).onSnapshot(snap=>{
     DB.groupInvites=snap.docs.map(d=>({id:d.id,...d.data()}));
     buildNav();
@@ -199,7 +235,9 @@ function detachPrivateListeners(){
   DB.groupInvites=[];
 }
 
-
+// Re-renders the nav (badges) and, when it's safe to do so, the current page.
+// Pages with in-progress form input (creating/editing a test, mid-attempt) are left
+// alone so a background sync never wipes out what the user is typing.
 function refreshUI(){
   if(!currentProfile) return;
   buildNav();
@@ -212,12 +250,21 @@ function currentUser(){
   return DB.users.find(u=>u.id===currentProfile.id) || currentProfile;
 }
 
-
+/* ---- Auth state is the single source of truth for whether we're "logged in" ---- */
+// While doRegister() is in the middle of creating the auth account and then
+// writing its Firestore profile, Firebase fires onAuthStateChanged immediately
+// after the account is created — before that profile document exists yet. Left
+// unguarded, this listener would see "no profile", show "Account not found",
+// and sign the brand-new user straight back out mid-registration. This flag
+// tells the listener to sit out that narrow window; doRegister() drives the
+// UI itself once its own write finishes (see checkUserProfileAndEnter below).
 let registrationInFlight=false;
 
 async function checkUserProfileAndEnter(user){
   try{
-  
+    // Make sure Firestore has the current sign-in credential before attaching
+    // listeners. This avoids an initial permission-denied race immediately
+    // after an email/password login in slower browser sessions.
     await user.getIdToken();
     const snap=await dbFS.collection('users').doc(user.uid).get();
     if(!snap.exists){
@@ -226,7 +273,9 @@ async function checkUserProfileAndEnter(user){
       return;
     }
     const profile={id:snap.id,...snap.data()};
-  
+    // This must match isApproved() in firestore.rules exactly. Previously any
+    // unexpected status (for example missing, "active", or "Approved") entered
+    // the app, where every listener was then denied by Firestore.
     if(profile.status!=='approved'){
       const message=profile.status==='pending'
         ? 'Your account is pending admin approval.'
@@ -253,7 +302,9 @@ auth.onAuthStateChanged(async (user)=>{
     DB.users=[];DB.directory=[];DB.tests=[];DB.attempts=[];DB.tickets=[];DB.groupChats=[];DB.groupInvites=[];DB.studyMaterials=[];DB.polls=[];DB.pollVotes=[];DB.materialComments=[];
     directoryBackfillStarted=false;
     document.getElementById('shell').classList.remove('show');
-    document.getElementById('authScreen').style.display='flex';
+    const authEl=document.getElementById('authScreen');
+    authEl.classList.remove('hide');
+    authEl.style.display='flex';
     return;
   }
   if(registrationInFlight) return; // doRegister() will call checkUserProfileAndEnter itself when ready
@@ -333,7 +384,10 @@ async function doRegister(){
   const subject=document.getElementById('regSubject').value.trim();
   if(!name||!email||!pw){toast('Please fill all required fields','error');return;}
   if(pw.length<6){toast('Password must be at least 6 characters','error');return;}
-
+  // School/Class are optional now — an admin can be assigned to one later, and
+  // this also avoids the old chicken-and-egg bug where the very first person
+  // (who needs to register in order to become admin) couldn't register at all
+  // because no school/class existed yet for them to pick from.
   const btn=document.getElementById('registerBtn');
   if(btn){btn.disabled=true; btn.textContent='Creating account...';}
   try{
@@ -347,7 +401,11 @@ async function doRegister(){
     const bootstrapRef=dbFS.collection('system').doc('bootstrap');
     let becameAdmin=false;
     try{
-      
+      // Bootstrap: if no admin has ever been created on this project yet, the very
+      // first person to register is automatically made an approved admin — solving
+      // the manual-Firestore-edit chicken-and-egg problem. This is done inside a
+      // transaction guarded by security rules so only one registrant can ever win
+      // this race, and every registrant after that follows the normal pending flow.
       await dbFS.runTransaction(async(tx)=>{
         const bs=await tx.get(bootstrapRef);
         if(!bs.exists || bs.data().adminCreated!==true){
@@ -361,7 +419,9 @@ async function doRegister(){
         }
       });
     }catch(profileErr){
-      
+      // The auth account was created but the profile write got rejected (e.g. rules
+      // not published yet). Don't leave an orphaned login behind — undo the auth
+      // account so the person can simply try registering again with the same email.
       await cred.user.delete().catch(()=>{});
       throw profileErr;
     }finally{
@@ -409,7 +469,9 @@ function doLogout(){
 /* ============ APP ENTRY ============ */
 function enterApp(){
   const u=currentUser();
-  document.getElementById('authScreen').style.display='none';
+  const authEl=document.getElementById('authScreen');
+  authEl.classList.add('hide'); // triggers the opacity fade defined in styles.css
+  setTimeout(()=>{ authEl.style.display='none'; },280);
   document.getElementById('shell').classList.add('show');
   document.getElementById('sbAvatar').textContent=u.name.charAt(0).toUpperCase();
   document.getElementById('sbName').textContent=u.name;
