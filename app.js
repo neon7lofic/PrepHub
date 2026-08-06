@@ -38,6 +38,7 @@ let DB={users:[],schools:[],classes:[],tests:[],attempts:[],tickets:[],conversat
 let currentProfile=null;
 let uiState={sidebarCollapsed:false, page:'dashboard', pageParams:{}};
 let privateListeners=[], publicListeners=[];
+let studyMaterialsListener=null, pollsListener=null, pollVotesListener=null, materialCommentsListener=null;
 
 function uid(pre){return (pre||'id')+'_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4);}
 function nowISO(){return new Date().toISOString();}
@@ -88,16 +89,25 @@ function attachPublicListeners(){
 /* ---- Private data, only after a successful approved login ---- */
 function attachPrivateListeners(){
   detachPrivateListeners();
-  privateListeners.push(dbFS.collection('users').onSnapshot(snap=>{
-    DB.users=snap.docs.map(d=>({id:d.id,...d.data()}));
-    // if this account gets suspended/rejected/deleted mid-session, sign them out
+  // Do not make every regular user subscribe to the complete user directory at
+  // login. Besides exposing more data than the dashboard needs, that query is
+  // rejected by common Firestore rules that only allow a user to read their own
+  // profile. Admins still receive the full live directory for account management.
+  const usersQuery = currentProfile.role==='admin'
+    ? dbFS.collection('users')
+    : dbFS.collection('users').doc(currentProfile.id);
+  privateListeners.push(usersQuery.onSnapshot(snap=>{
+    DB.users = currentProfile.role==='admin'
+      ? snap.docs.map(d=>({id:d.id,...d.data()}))
+      : (snap.exists ? [{id:snap.id,...snap.data()}] : []);
+    // If this account gets suspended, rejected, or deleted mid-session, sign out.
     if(currentProfile && !DB.users.some(u=>u.id===currentProfile.id && u.status==='approved')){
       toast('Your account access has changed. Please log in again.','warn');
       doLogout();
       return;
     }
     refreshUI();
-  }, e=>toast('Sync error (users): '+friendlyError(e),'error')));
+  }, e=>toast('Sync error (profile): '+friendlyError(e),'error')));
   privateListeners.push(dbFS.collection('tests').onSnapshot(snap=>{
     DB.tests=snap.docs.map(d=>({id:d.id,...d.data()}));
     refreshUI();
@@ -106,22 +116,6 @@ function attachPrivateListeners(){
     DB.attempts=snap.docs.map(d=>({id:d.id,...d.data()}));
     refreshUI();
   }, e=>toast('Sync error (attempts): '+friendlyError(e),'error')));
-  privateListeners.push(dbFS.collection('studyMaterials').onSnapshot(snap=>{
-    DB.studyMaterials=snap.docs.map(d=>({id:d.id,...d.data()}));
-    refreshUI();
-  }, e=>toast('Sync error (study materials): '+friendlyError(e),'error')));
-  privateListeners.push(dbFS.collection('polls').onSnapshot(snap=>{
-    DB.polls=snap.docs.map(d=>({id:d.id,...d.data()}));
-    refreshUI();
-  }, e=>toast('Sync error (polls): '+friendlyError(e),'error')));
-  privateListeners.push(dbFS.collectionGroup('votes').onSnapshot(snap=>{
-    DB.pollVotes=snap.docs.map(d=>({id:d.id,...d.data()}));
-    if(uiState.page==='polls') render();
-  }, e=>toast('Sync error (poll votes): '+friendlyError(e),'error')));
-  privateListeners.push(dbFS.collectionGroup('comments').onSnapshot(snap=>{
-    DB.materialComments=snap.docs.map(d=>({id:d.id,...d.data()}));
-    if(uiState.page==='materials'||uiState.page==='examprep') render();
-  }, e=>toast('Sync error (material discussions): '+friendlyError(e),'error')));
   // The tickets rule allows a read either if you're an admin, or if it's your
   // OWN ticket (resource.data.userId == your uid). Firestore can only allow an
   // unfiltered list() query when the rule can be proven safe purely from what
@@ -177,6 +171,8 @@ function attachPrivateListeners(){
 }
 function detachPrivateListeners(){
   privateListeners.forEach(u=>u()); privateListeners=[];
+  [studyMaterialsListener,pollsListener,pollVotesListener,materialCommentsListener].forEach(u=>{if(u)u();});
+  studyMaterialsListener=null;pollsListener=null;pollVotesListener=null;materialCommentsListener=null;
   if(chatState.msgUnsub){ chatState.msgUnsub(); chatState.msgUnsub=null; }
   chatState.otherUserId=null; chatState.messages=[];
   chatState.mode='direct'; chatState.groupId=null; chatState.groupMessages=[];
@@ -210,6 +206,10 @@ let registrationInFlight=false;
 
 async function checkUserProfileAndEnter(user){
   try{
+    // Make sure Firestore has the current sign-in credential before attaching
+    // listeners. This avoids an initial permission-denied race immediately
+    // after an email/password login in slower browser sessions.
+    await user.getIdToken();
     const snap=await dbFS.collection('users').doc(user.uid).get();
     if(!snap.exists){
       toast('Account not found. Contact admin.','error');
@@ -549,7 +549,32 @@ function matchesSearch(item,search){return !search||[item.title,item.subject,ite
 let learningUploadData='';
 let learningEditUploadData='';
 
+function ensureStudyMaterialsListener(){
+  if(studyMaterialsListener)return;
+  studyMaterialsListener=dbFS.collection('studyMaterials').onSnapshot(snap=>{
+    DB.studyMaterials=snap.docs.map(d=>({id:d.id,...d.data()}));
+    if(uiState.page==='materials'||uiState.page==='examprep'||uiState.page==='progress')render();
+  },e=>toast('Study materials need the latest Firestore rules to be published: '+friendlyError(e),'error'));
+}
+function ensureMaterialCommentsListener(){
+  if(materialCommentsListener)return;
+  materialCommentsListener=dbFS.collectionGroup('comments').onSnapshot(snap=>{
+    DB.materialComments=snap.docs.map(d=>({id:d.id,...d.data()}));
+    if(uiState.page==='materials'||uiState.page==='examprep')render();
+  },e=>toast('Material discussions need the latest Firestore rules to be published: '+friendlyError(e),'error'));
+}
+function ensurePollListeners(){
+  if(!pollsListener)pollsListener=dbFS.collection('polls').onSnapshot(snap=>{
+    DB.polls=snap.docs.map(d=>({id:d.id,...d.data()}));if(uiState.page==='polls')render();
+  },e=>toast('Polls need the latest Firestore rules to be published: '+friendlyError(e),'error'));
+  if(!pollVotesListener)pollVotesListener=dbFS.collectionGroup('votes').onSnapshot(snap=>{
+    DB.pollVotes=snap.docs.map(d=>({id:d.id,...d.data()}));if(uiState.page==='polls')render();
+  },e=>toast('Poll votes need the latest Firestore rules to be published: '+friendlyError(e),'error'));
+}
+
 function renderLearningResources(c,category){
+  ensureStudyMaterialsListener();
+  ensureMaterialCommentsListener();
   const isPrep=category==='exam-prep';
   const title=isPrep?'Exam Prep Guides':'Study Materials';
   const intro=isPrep
@@ -692,6 +717,7 @@ function deleteLearningResource(id){
 /* ============ ADMIN: DASHBOARD ============ */
 /* ============ CLASS POLLS ============ */
 function renderPolls(c){
+  ensurePollListeners();
   const u=currentUser();
   if(!window._pollClassFilter)window._pollClassFilter='ALL';
   const polls=DB.polls.filter(p=>matchesClass(p,window._pollClassFilter)).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
@@ -1599,6 +1625,7 @@ function teacherLeaderboard(){
 
 /* ============ STUDENT ANALYTICS ============ */
 function renderStudentProgress(c){
+  ensureStudyMaterialsListener();
   const u=currentUser();const atts=userAttempts(u.id);const materials=DB.studyMaterials.filter(m=>matchesClass(m,u.cls));const upcoming=availableTestsFor(u).filter(t=>t.dueAt&&new Date(t.dueAt)>=new Date()).sort((a,b)=>new Date(a.dueAt)-new Date(b.dueAt));
   c.innerHTML=`<div class="page-header"><h2>My Progress</h2><p>Keep track of your study work, performance, and upcoming deadlines.</p></div><div class="g4" style="margin-bottom:20px;">${statCard('🧾','Tests Attempted',atts.length,'var(--blue)','var(--blue-lt)')}${statCard('📊','Average Score',avgScorePctForUser(u.id)+'%','var(--teal)','var(--teal-lt)')}${statCard('📚','Class Resources',materials.length,'var(--purple)','var(--purple-lt)')}${statCard('📅','Upcoming Deadlines',upcoming.length,'var(--orange)','var(--orange-lt)')}</div><div class="g2"><div class="card"><div class="card-header"><h3>Upcoming Deadlines</h3><button class="btn btn-ghost btn-xs" onclick="goPage('available')">View Tests</button></div>${upcoming.length?upcoming.slice(0,6).map(t=>`<div style="padding:10px 0;border-bottom:1px solid var(--border);"><strong>${esc(t.title)}</strong><div class="hint">Due ${fmtDate(t.dueAt)}</div></div>`).join(''):'<div class="empty" style="padding:24px;"><div class="e-sub">No upcoming test deadlines.</div></div>'}</div><div class="card"><div class="card-header"><h3>Subject Progress</h3><button class="btn btn-ghost btn-xs" onclick="goPage('analytics')">Full Analytics</button></div>${subjectAverages(atts)}</div></div>`;
 }
