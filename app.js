@@ -1,15 +1,4 @@
-/* ============ FIREBASE SETUP ============
-   1. Go to https://console.firebase.google.com -> Add project
-   2. Project settings -> Add a Web App -> copy the config object -> paste it below
-   3. Build > Authentication -> Get started -> Sign-in method -> enable "Email/Password"
-   4. Build > Firestore Database -> Create database (any region, start in production mode)
-   5. Firestore -> Rules -> paste the contents of firestore.rules (provided alongside this file) -> Publish
-   6. Open this HTML file. Register your own account first (any role), then in the Firebase
-      Console -> Firestore -> users -> open your user document -> manually set role:"admin"
-      and status:"approved". That's your one-time admin bootstrap step. Every other rule
-      already correctly requires admin approval, so this manual step is done on purpose —
-      it's what keeps random visitors from being able to grant themselves admin.
-*/
+
 const firebaseConfig = {
   apiKey: "AIzaSyCt6s5nMB4bS6_tKYOu8U5ERH7-Y9yP9qU",
   authDomain: "prephub-f9dbd.firebaseapp.com",
