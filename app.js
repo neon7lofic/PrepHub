@@ -38,7 +38,8 @@ let DB={users:[],schools:[],classes:[],tests:[],attempts:[],tickets:[],conversat
 let currentProfile=null;
 let uiState={sidebarCollapsed:false, page:'dashboard', pageParams:{}};
 let privateListeners=[], publicListeners=[];
-let studyMaterialsListener=null, pollsListener=null, pollVotesListener=null, materialCommentsListener=null;
+let studyMaterialsListener=null, pollsListener=null;
+let materialCommentListeners={}, pollVoteListeners={};
 
 function uid(pre){return (pre||'id')+'_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4);}
 function nowISO(){return new Date().toISOString();}
@@ -171,8 +172,10 @@ function attachPrivateListeners(){
 }
 function detachPrivateListeners(){
   privateListeners.forEach(u=>u()); privateListeners=[];
-  [studyMaterialsListener,pollsListener,pollVotesListener,materialCommentsListener].forEach(u=>{if(u)u();});
-  studyMaterialsListener=null;pollsListener=null;pollVotesListener=null;materialCommentsListener=null;
+  [studyMaterialsListener,pollsListener].forEach(u=>{if(u)u();});
+  Object.values(materialCommentListeners).forEach(u=>u());
+  Object.values(pollVoteListeners).forEach(u=>u());
+  studyMaterialsListener=null;pollsListener=null;materialCommentListeners={};pollVoteListeners={};
   if(chatState.msgUnsub){ chatState.msgUnsub(); chatState.msgUnsub=null; }
   chatState.otherUserId=null; chatState.messages=[];
   chatState.mode='direct'; chatState.groupId=null; chatState.groupMessages=[];
@@ -553,28 +556,53 @@ function ensureStudyMaterialsListener(){
   if(studyMaterialsListener)return;
   studyMaterialsListener=dbFS.collection('studyMaterials').onSnapshot(snap=>{
     DB.studyMaterials=snap.docs.map(d=>({id:d.id,...d.data()}));
+    syncMaterialCommentListeners();
     if(uiState.page==='materials'||uiState.page==='examprep'||uiState.page==='progress')render();
   },e=>toast('Study materials need the latest Firestore rules to be published: '+friendlyError(e),'error'));
 }
-function ensureMaterialCommentsListener(){
-  if(materialCommentsListener)return;
-  materialCommentsListener=dbFS.collectionGroup('comments').onSnapshot(snap=>{
-    DB.materialComments=snap.docs.map(d=>({id:d.id,...d.data()}));
-    if(uiState.page==='materials'||uiState.page==='examprep')render();
-  },e=>toast('Material discussions need the latest Firestore rules to be published: '+friendlyError(e),'error'));
+function syncMaterialCommentListeners(){
+  const materialIds=new Set(DB.studyMaterials.map(x=>x.id));
+  Object.keys(materialCommentListeners).forEach(id=>{
+    if(!materialIds.has(id)){
+      materialCommentListeners[id](); delete materialCommentListeners[id];
+      DB.materialComments=DB.materialComments.filter(c=>c.materialId!==id);
+    }
+  });
+  materialIds.forEach(materialId=>{
+    if(materialCommentListeners[materialId])return;
+    materialCommentListeners[materialId]=dbFS.collection('studyMaterials').doc(materialId).collection('comments').onSnapshot(snap=>{
+      const comments=snap.docs.map(d=>({id:d.id,...d.data(),materialId}));
+      DB.materialComments=DB.materialComments.filter(c=>c.materialId!==materialId).concat(comments);
+      refreshMaterialDiscussion(materialId);
+      if(uiState.page==='materials'||uiState.page==='examprep')render();
+    },e=>toast('Could not load questions for this material: '+friendlyError(e),'error'));
+  });
 }
 function ensurePollListeners(){
   if(!pollsListener)pollsListener=dbFS.collection('polls').onSnapshot(snap=>{
-    DB.polls=snap.docs.map(d=>({id:d.id,...d.data()}));if(uiState.page==='polls')render();
+    DB.polls=snap.docs.map(d=>({id:d.id,...d.data()}));syncPollVoteListeners();if(uiState.page==='polls')render();
   },e=>toast('Polls need the latest Firestore rules to be published: '+friendlyError(e),'error'));
-  if(!pollVotesListener)pollVotesListener=dbFS.collectionGroup('votes').onSnapshot(snap=>{
-    DB.pollVotes=snap.docs.map(d=>({id:d.id,...d.data()}));if(uiState.page==='polls')render();
-  },e=>toast('Poll votes need the latest Firestore rules to be published: '+friendlyError(e),'error'));
+}
+function syncPollVoteListeners(){
+  const pollIds=new Set(DB.polls.map(x=>x.id));
+  Object.keys(pollVoteListeners).forEach(id=>{
+    if(!pollIds.has(id)){
+      pollVoteListeners[id](); delete pollVoteListeners[id];
+      DB.pollVotes=DB.pollVotes.filter(v=>v.pollId!==id);
+    }
+  });
+  pollIds.forEach(pollId=>{
+    if(pollVoteListeners[pollId])return;
+    pollVoteListeners[pollId]=dbFS.collection('polls').doc(pollId).collection('votes').onSnapshot(snap=>{
+      const votes=snap.docs.map(d=>({id:d.id,...d.data(),pollId}));
+      DB.pollVotes=DB.pollVotes.filter(v=>v.pollId!==pollId).concat(votes);
+      if(uiState.page==='polls')render();
+    },e=>toast('Could not load votes for this poll: '+friendlyError(e),'error'));
+  });
 }
 
 function renderLearningResources(c,category){
   ensureStudyMaterialsListener();
-  ensureMaterialCommentsListener();
   const isPrep=category==='exam-prep';
   const title=isPrep?'Exam Prep Guides':'Study Materials';
   const intro=isPrep
@@ -698,9 +726,18 @@ async function saveEditedLearningResource(id,btn){
 function openMaterialDiscussion(materialId){
   const item=DB.studyMaterials.find(x=>x.id===materialId); if(!item)return;
   const comments=DB.materialComments.filter(c=>c.materialId===materialId).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
-  const list=comments.length?comments.map(c=>`<div style="padding:10px 0;border-bottom:1px solid var(--border);"><strong style="font-size:.8rem;">${esc(userById(c.userId)?.name||'User')}</strong><span style="font-size:.68rem;color:var(--ink4);margin-left:7px;">${fmtDate(c.createdAt)}</span><div style="white-space:pre-wrap;font-size:.82rem;line-height:1.5;margin-top:4px;">${esc(c.text)}</div></div>`).join(''):'<div class="empty" style="padding:20px;"><div class="e-sub">No questions yet. Start the discussion.</div></div>';
-  const html=`<div class="overlay" id="materialDiscussionOverlay" style="z-index:600;"><div class="modal modal-wide"><h3>Questions & Discussion</h3><p class="modal-sub">${esc(item.title)}</p><div style="max-height:300px;overflow-y:auto;margin-bottom:14px;">${list}</div><div class="field"><label>Ask a question or reply</label><textarea id="materialCommentText" maxlength="2000" placeholder="Write your question or answer…" style="min-height:70px;"></textarea></div><div class="modal-btns"><button class="btn btn-ghost" onclick="document.getElementById('materialDiscussionOverlay').remove()">Close</button><button class="btn btn-primary" onclick="postMaterialComment('${materialId}',this)">Post</button></div></div></div>`;
+  const html=`<div class="overlay" id="materialDiscussionOverlay" data-material-id="${materialId}" style="z-index:600;"><div class="modal modal-wide"><h3>Questions & Discussion</h3><p class="modal-sub">${esc(item.title)}</p><div id="materialDiscussionList" style="max-height:300px;overflow-y:auto;margin-bottom:14px;">${materialDiscussionListHTML(comments)}</div><div class="field"><label>Ask a question or reply</label><textarea id="materialCommentText" maxlength="2000" placeholder="Write your question or answer…" style="min-height:70px;"></textarea></div><div class="modal-btns"><button class="btn btn-ghost" onclick="document.getElementById('materialDiscussionOverlay').remove()">Close</button><button class="btn btn-primary" onclick="postMaterialComment('${materialId}',this)">Post</button></div></div></div>`;
   document.body.insertAdjacentHTML('beforeend',html);
+}
+function materialDiscussionListHTML(comments){
+  return comments.length?comments.map(c=>`<div style="padding:10px 0;border-bottom:1px solid var(--border);"><strong style="font-size:.8rem;">${esc(userById(c.userId)?.name||'User')}</strong><span style="font-size:.68rem;color:var(--ink4);margin-left:7px;">${fmtDate(c.createdAt)}</span><div style="white-space:pre-wrap;font-size:.82rem;line-height:1.5;margin-top:4px;">${esc(c.text)}</div></div>`).join(''):'<div class="empty" style="padding:20px;"><div class="e-sub">No questions yet. Start the discussion.</div></div>';
+}
+function refreshMaterialDiscussion(materialId){
+  const overlay=document.getElementById('materialDiscussionOverlay');
+  const list=document.getElementById('materialDiscussionList');
+  if(!overlay||!list||overlay.dataset.materialId!==materialId)return;
+  const comments=DB.materialComments.filter(c=>c.materialId===materialId).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
+  list.innerHTML=materialDiscussionListHTML(comments);
 }
 async function postMaterialComment(materialId,btn){
   const text=(document.getElementById('materialCommentText').value||'').trim();
@@ -716,12 +753,15 @@ function deleteLearningResource(id){
 
 /* ============ ADMIN: DASHBOARD ============ */
 /* ============ CLASS POLLS ============ */
+function pollOptionFieldHTML(index){
+  return `<div class="field" data-poll-option-row><label>Option ${index}${index>2?' (optional)':''}</label><div style="display:flex;gap:6px;"><input data-poll-option maxlength="100" placeholder="Option ${index}">${index>2?`<button type="button" class="btn btn-ghost btn-xs" onclick="this.closest('[data-poll-option-row]').remove()">Remove</button>`:''}</div></div>`;
+}
 function renderPolls(c){
   ensurePollListeners();
   const u=currentUser();
   if(!window._pollClassFilter)window._pollClassFilter='ALL';
   const polls=DB.polls.filter(p=>matchesClass(p,window._pollClassFilter)).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-  const composer=u.role==='teacher'?`<div class="card" style="margin-bottom:18px;"><div class="card-header"><h3>Create a quick class poll</h3></div><div class="field"><label>Question <span class="req">*</span></label><input id="pollQuestion" maxlength="220" placeholder="e.g. Which chapter should we revise next?"></div><div class="g2"><div class="field"><label>Option 1</label><input id="pollOpt1" maxlength="100"></div><div class="field"><label>Option 2</label><input id="pollOpt2" maxlength="100"></div><div class="field"><label>Option 3 (optional)</label><input id="pollOpt3" maxlength="100"></div><div class="field"><label>Target class</label><select id="pollClass">${classFilterOptions('ALL')}</select></div></div><button class="btn btn-primary" onclick="createPoll(this)">Publish Poll</button></div>`:'';
+  const composer=(u.role==='teacher'||u.role==='admin')?`<div class="card" style="margin-bottom:18px;"><div class="card-header"><h3>Create a quick class poll</h3></div><div class="field"><label>Question <span class="req">*</span></label><input id="pollQuestion" maxlength="220" placeholder="e.g. Which chapter should we revise next?"></div><div class="g2" id="pollOptions">${pollOptionFieldHTML(1)}${pollOptionFieldHTML(2)}${pollOptionFieldHTML(3)}</div><button type="button" class="btn btn-ghost btn-sm" onclick="addPollOption()">+ Add option</button><div class="field" style="margin-top:12px;"><label>Target class</label><select id="pollClass">${classFilterOptions('ALL')}</select></div><button class="btn btn-primary" onclick="createPoll(this)">Publish Poll</button></div>`:'';
   c.innerHTML=`<div class="page-header"><h2>Class Polls</h2><p>Quick questions and feedback for your classroom.</p></div><div class="page-toolbar"><label style="font-size:.78rem;font-weight:600;color:var(--ink3);">Filter by class</label><select onchange="window._pollClassFilter=this.value;renderPolls(document.getElementById('content'))" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface);color:var(--ink);">${classFilterOptions(window._pollClassFilter)}</select></div>${composer}<div class="material-grid">${polls.length?polls.map(pollCardHTML).join(''):'<div class="empty" style="grid-column:1/-1;"><div class="e-icon">🗳️</div><div class="e-title">No polls yet</div><div class="e-sub">Teachers can create the first class poll here.</div></div>'}</div>`;
 }
 function pollCardHTML(poll){
@@ -729,8 +769,13 @@ function pollCardHTML(poll){
   const options=(poll.options||[]).map((option,i)=>{const count=votes.filter(v=>v.optionIndex===i).length;const pct=total?Math.round(count/total*100):0;return `<div style="margin:9px 0;"><button class="btn btn-ghost btn-sm" style="width:100%;justify-content:space-between;${mine||poll.closed?'cursor:default':''}" ${mine||poll.closed?'disabled':''} onclick="voteOnPoll('${poll.id}',${i},this)"><span>${esc(option)}</span><span>${mine?count+' ('+pct+'%)':'Vote'}</span></button>${mine?`<div class="progress-track" style="margin-top:4px;"><div class="progress-fill" style="width:${pct}%;"></div></div>`:''}</div>`;}).join('');
   return `<article class="material-card"><div style="display:flex;justify-content:space-between;gap:8px;"><div class="material-icon">🗳️</div><span class="badge ${poll.closed?'b-draft':'b-live'}">${poll.closed?'Closed':'Open'}</span></div><div><h3>${esc(poll.question)}</h3><div class="ic-meta"><span>🏷️ ${poll.cls==='ALL'||!poll.cls?'All Classes':esc(className(poll.cls))}</span><span>${total} vote${total===1?'':'s'}</span></div></div><div>${options}</div>${canManage?`<div class="ic-actions" style="margin-top:auto;">${!poll.closed?`<button class="btn btn-gold btn-xs" onclick="closePoll('${poll.id}')">Close Poll</button>`:''}<button class="btn btn-danger btn-xs" onclick="deletePoll('${poll.id}')">Delete</button></div>`:''}</article>`;
 }
+function addPollOption(){
+  const wrap=document.getElementById('pollOptions'); const count=wrap.querySelectorAll('[data-poll-option]').length;
+  if(count>=10){toast('A poll can have up to 10 options','warn');return;}
+  wrap.insertAdjacentHTML('beforeend',pollOptionFieldHTML(count+1));
+}
 async function createPoll(btn){
-  const question=(document.getElementById('pollQuestion').value||'').trim();const options=['pollOpt1','pollOpt2','pollOpt3'].map(id=>(document.getElementById(id).value||'').trim()).filter(Boolean);const cls=document.getElementById('pollClass').value;
+  const question=(document.getElementById('pollQuestion').value||'').trim();const options=[...document.querySelectorAll('[data-poll-option]')].map(el=>el.value.trim()).filter(Boolean);const cls=document.getElementById('pollClass').value;
   if(!question||options.length<2){toast('Add a question and at least two options','error');return;}btn.disabled=true;
   try{await dbFS.collection('polls').add({question,options,cls,createdBy:currentProfile.id,createdAt:nowISO(),closed:false});toast('Poll published','success');}catch(e){toast('Could not publish: '+friendlyError(e),'error');btn.disabled=false;}
 }
