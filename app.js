@@ -138,13 +138,31 @@ function attachPrivateListeners(){
   }, e=>handlePrivateSyncError('profile',e)));
   // Contact cards live separately from full profiles, so messaging never needs
   // access to email addresses, phone numbers, or approval history.
-  const directoryQuery=currentProfile.role==='admin'
-    ? dbFS.collection('userDirectory')
-    : dbFS.collection('userDirectory').where('school','==',currentProfile.school||'').where('status','==','approved');
-  privateListeners.push(directoryQuery.onSnapshot(snap=>{
-    DB.directory=snap.docs.map(d=>({id:d.id,...d.data()}));
+  // Admin accounts often have no school set (school is optional at signup),
+  // so a plain school-scoped query would never surface the admin's card to
+  // regular users. Non-admins therefore run TWO listeners — their own school,
+  // plus a standing one for approved admins — merged into DB.directory.
+  let dirBySchool=[], dirAdmins=[];
+  function mergeDirectory(){ 
+    const seen=new Set(); DB.directory=[];
+    [...dirBySchool,...dirAdmins].forEach(u=>{ if(!seen.has(u.id)){ seen.add(u.id); DB.directory.push(u); } });
     refreshUI();
-  }, e=>handlePrivateSyncError('directory',e)));
+  }
+  if(currentProfile.role==='admin'){
+    privateListeners.push(dbFS.collection('userDirectory').onSnapshot(snap=>{
+      DB.directory=snap.docs.map(d=>({id:d.id,...d.data()}));
+      refreshUI();
+    }, e=>handlePrivateSyncError('directory',e)));
+  }else{
+    privateListeners.push(dbFS.collection('userDirectory')
+      .where('school','==',currentProfile.school||'').where('status','==','approved')
+      .onSnapshot(snap=>{ dirBySchool=snap.docs.map(d=>({id:d.id,...d.data()})); mergeDirectory(); },
+        e=>handlePrivateSyncError('directory',e)));
+    privateListeners.push(dbFS.collection('userDirectory')
+      .where('role','==','admin').where('status','==','approved')
+      .onSnapshot(snap=>{ dirAdmins=snap.docs.map(d=>({id:d.id,...d.data()})); mergeDirectory(); },
+        e=>handlePrivateSyncError('directory',e)));
+  }
   privateListeners.push(dbFS.collection('tests').onSnapshot(snap=>{
     DB.tests=snap.docs.map(d=>({id:d.id,...d.data()}));
     refreshUI();
@@ -585,7 +603,7 @@ function contactDirectory(){
   // An admin already has permission to see the full user list. Use it as a
   // safe migration fallback until the minimal directory has been populated.
   const source=me.role==='admin' ? DB.users : DB.directory;
-  return source.filter(u=>u.status==='approved'&&u.id!==me.id&&(me.role==='admin'||u.school===me.school));
+  return source.filter(u=>u.status==='approved'&&u.id!==me.id&&(me.role==='admin'||u.role==='admin'||u.school===me.school));
 }
 function testById(id){return DB.tests.find(x=>x.id===id);}
 function testAttempts(testId){return DB.attempts.filter(a=>a.testId===testId);}
