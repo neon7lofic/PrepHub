@@ -140,7 +140,7 @@ function attachPrivateListeners(){
   // access to email addresses, phone numbers, or approval history.
   const directoryQuery=currentProfile.role==='admin'
     ? dbFS.collection('userDirectory')
-    : dbFS.collection('userDirectory').where('school','==',currentProfile.school||'__none__').where('status','==','approved');
+    : dbFS.collection('userDirectory').where('school','==',currentProfile.school||'').where('status','==','approved');
   privateListeners.push(directoryQuery.onSnapshot(snap=>{
     DB.directory=snap.docs.map(d=>({id:d.id,...d.data()}));
     refreshUI();
@@ -582,7 +582,10 @@ function className(id){const c=DB.classes.find(x=>x.id===id);return c?c.name:'â€
 function userById(id){return DB.users.find(x=>x.id===id)||DB.directory.find(x=>x.id===id);}
 function contactDirectory(){
   const me=currentUser();
-  return DB.directory.filter(u=>u.status==='approved'&&u.id!==me.id&&(me.role==='admin'||u.school===me.school));
+  // An admin already has permission to see the full user list. Use it as a
+  // safe migration fallback until the minimal directory has been populated.
+  const source=me.role==='admin' ? DB.users : DB.directory;
+  return source.filter(u=>u.status==='approved'&&u.id!==me.id&&(me.role==='admin'||u.school===me.school));
 }
 function testById(id){return DB.tests.find(x=>x.id===id);}
 function testAttempts(testId){return DB.attempts.filter(a=>a.testId===testId);}
