@@ -40,6 +40,7 @@ let uiState={sidebarCollapsed:false, page:'dashboard', pageParams:{}};
 let privateListeners=[], publicListeners=[];
 let studyMaterialsListener=null, pollsListener=null;
 let materialCommentListeners={}, pollVoteListeners={};
+let privatePermissionHandled=false;
 
 function uid(pre){return (pre||'id')+'_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4);}
 function nowISO(){return new Date().toISOString();}
@@ -58,6 +59,17 @@ function friendlyError(e){
     'permission-denied':'You do not have permission to do that.'
   };
   return map[e.code] || e.message || 'Something went wrong.';
+}
+function handlePrivateSyncError(area,e){
+  // One denied Firestore request can make several listeners fail at once.
+  // Show the actual account-state problem once instead of stacking popups.
+  if(e && e.code==='permission-denied'){
+    if(privatePermissionHandled)return;
+    privatePermissionHandled=true;
+    toast('Your signed-in account is not approved for app data. Ask an admin to set its user status to "approved".','warn');
+    return;
+  }
+  toast('Sync error ('+area+'): '+friendlyError(e),'error');
 }
 
 // Optimistic local-cache helpers so the UI updates instantly after a write succeeds,
@@ -90,6 +102,7 @@ function attachPublicListeners(){
 /* ---- Private data, only after a successful approved login ---- */
 function attachPrivateListeners(){
   detachPrivateListeners();
+  privatePermissionHandled=false;
   // Do not make every regular user subscribe to the complete user directory at
   // login. Besides exposing more data than the dashboard needs, that query is
   // rejected by common Firestore rules that only allow a user to read their own
@@ -108,15 +121,15 @@ function attachPrivateListeners(){
       return;
     }
     refreshUI();
-  }, e=>toast('Sync error (profile): '+friendlyError(e),'error')));
+  }, e=>handlePrivateSyncError('profile',e)));
   privateListeners.push(dbFS.collection('tests').onSnapshot(snap=>{
     DB.tests=snap.docs.map(d=>({id:d.id,...d.data()}));
     refreshUI();
-  }, e=>toast('Sync error (tests): '+friendlyError(e),'error')));
+  }, e=>handlePrivateSyncError('tests',e)));
   privateListeners.push(dbFS.collection('attempts').onSnapshot(snap=>{
     DB.attempts=snap.docs.map(d=>({id:d.id,...d.data()}));
     refreshUI();
-  }, e=>toast('Sync error (attempts): '+friendlyError(e),'error')));
+  }, e=>handlePrivateSyncError('attempts',e)));
   // The tickets rule allows a read either if you're an admin, or if it's your
   // OWN ticket (resource.data.userId == your uid). Firestore can only allow an
   // unfiltered list() query when the rule can be proven safe purely from what
@@ -147,7 +160,7 @@ function attachPrivateListeners(){
     } else {
       refreshUI();
     }
-  }, e=>toast('Sync error (tickets): '+friendlyError(e),'error')));
+  }, e=>handlePrivateSyncError('tickets',e)));
   privateListeners.push(dbFS.collection('conversations').where('participants','array-contains',currentProfile.id).onSnapshot(snap=>{
     DB.conversations=snap.docs.map(d=>({id:d.id,...d.data()}));
     buildNav();
@@ -155,11 +168,11 @@ function attachPrivateListeners(){
     // whatever the person is mid-typing into the message box), so update just
     // the conversation list sidebar directly instead.
     if(uiState.page==='messages') renderConvoList();
-  }, e=>toast('Sync error (messages): '+friendlyError(e),'error')));
+  }, e=>handlePrivateSyncError('messages',e)));
   privateListeners.push(dbFS.collection('groupChats').where('participants','array-contains',currentProfile.id).onSnapshot(snap=>{
     DB.groupChats=snap.docs.map(d=>({id:d.id,...d.data()}));
     if(uiState.page==='messages') renderGroupList();
-  }, e=>toast('Sync error (groups): '+friendlyError(e),'error')));
+  }, e=>handlePrivateSyncError('groups',e)));
   // Groups I've been invited to but haven't accepted/declined yet — a separate
   // query since it's keyed off a different array field (`invites`, not
   // `participants`). Nobody is ever dropped straight into a group's member
@@ -168,7 +181,7 @@ function attachPrivateListeners(){
     DB.groupInvites=snap.docs.map(d=>({id:d.id,...d.data()}));
     buildNav();
     if(uiState.page==='messages') renderGroupList();
-  }, e=>toast('Sync error (group invites): '+friendlyError(e),'error')));
+  }, e=>handlePrivateSyncError('group invites',e)));
 }
 function detachPrivateListeners(){
   privateListeners.forEach(u=>u()); privateListeners=[];
@@ -220,13 +233,16 @@ async function checkUserProfileAndEnter(user){
       return;
     }
     const profile={id:snap.id,...snap.data()};
-    if(profile.status==='pending'){
-      toast('Your account is pending admin approval','warn');
-      await auth.signOut();
-      return;
-    }
-    if(profile.status==='rejected'){
-      toast('Your registration was rejected. Contact admin.','error');
+    // This must match isApproved() in firestore.rules exactly. Previously any
+    // unexpected status (for example missing, "active", or "Approved") entered
+    // the app, where every listener was then denied by Firestore.
+    if(profile.status!=='approved'){
+      const message=profile.status==='pending'
+        ? 'Your account is pending admin approval.'
+        : profile.status==='rejected'
+          ? 'Your registration was rejected. Contact an admin.'
+          : 'Your account is not approved yet. Ask an admin to set its status to "approved".';
+      toast(message,profile.status==='rejected'?'error':'warn');
       await auth.signOut();
       return;
     }
@@ -558,7 +574,7 @@ function ensureStudyMaterialsListener(){
     DB.studyMaterials=snap.docs.map(d=>({id:d.id,...d.data()}));
     syncMaterialCommentListeners();
     if(uiState.page==='materials'||uiState.page==='examprep'||uiState.page==='progress')render();
-  },e=>toast('Study materials need the latest Firestore rules to be published: '+friendlyError(e),'error'));
+  },e=>handlePrivateSyncError('study materials',e));
 }
 function syncMaterialCommentListeners(){
   const materialIds=new Set(DB.studyMaterials.map(x=>x.id));
@@ -575,13 +591,13 @@ function syncMaterialCommentListeners(){
       DB.materialComments=DB.materialComments.filter(c=>c.materialId!==materialId).concat(comments);
       refreshMaterialDiscussion(materialId);
       if(uiState.page==='materials'||uiState.page==='examprep')render();
-    },e=>toast('Could not load questions for this material: '+friendlyError(e),'error'));
+    },e=>handlePrivateSyncError('material questions',e));
   });
 }
 function ensurePollListeners(){
   if(!pollsListener)pollsListener=dbFS.collection('polls').onSnapshot(snap=>{
     DB.polls=snap.docs.map(d=>({id:d.id,...d.data()}));syncPollVoteListeners();if(uiState.page==='polls')render();
-  },e=>toast('Polls need the latest Firestore rules to be published: '+friendlyError(e),'error'));
+  },e=>handlePrivateSyncError('polls',e));
 }
 function syncPollVoteListeners(){
   const pollIds=new Set(DB.polls.map(x=>x.id));
@@ -597,7 +613,7 @@ function syncPollVoteListeners(){
       const votes=snap.docs.map(d=>({id:d.id,...d.data(),pollId}));
       DB.pollVotes=DB.pollVotes.filter(v=>v.pollId!==pollId).concat(votes);
       if(uiState.page==='polls')render();
-    },e=>toast('Could not load votes for this poll: '+friendlyError(e),'error'));
+    },e=>handlePrivateSyncError('poll votes',e));
   });
 }
 
