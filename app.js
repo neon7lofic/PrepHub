@@ -146,12 +146,31 @@ function attachPrivateListeners(){
   function mergeDirectory(){ 
     const seen=new Set(); DB.directory=[];
     [...dirBySchool,...dirAdmins].forEach(u=>{ if(!seen.has(u.id)){ seen.add(u.id); DB.directory.push(u); } });
+    onDirectoryUpdated();
+  }
+  // 'messages' sits in refreshUI's skip list (see refreshUI below), so a plain
+  // refreshUI() call here would silently do nothing while someone has the
+  // Messages page open — the contact list and any already-open chat header
+  // would stay stuck on stale/"Unknown user" data forever, even after the
+  // real directory finishes loading a moment later. Patch those spots directly,
+  // same pattern already used for tickets/conversations/groups below.
+  function onDirectoryUpdated(){
     refreshUI();
+    if(uiState.page==='messages'){
+      renderConvoList();
+      if(chatState.mode==='direct' && chatState.otherUserId){
+        const other=userById(chatState.otherUserId);
+        const headerEl=document.getElementById('chatHeader');
+        if(headerEl) headerEl.innerHTML='<span>'+esc(other?other.name:'Unknown user')+' <span style="font-weight:400;color:var(--ink4);font-size:.8rem;">('+esc(other?other.role:'')+')</span></span>';
+      }
+      const nc=document.getElementById('newChatList');
+      if(nc && typeof filterNewChatList==='function') filterNewChatList();
+    }
   }
   if(currentProfile.role==='admin'){
     privateListeners.push(dbFS.collection('userDirectory').onSnapshot(snap=>{
       DB.directory=snap.docs.map(d=>({id:d.id,...d.data()}));
-      refreshUI();
+      onDirectoryUpdated();
     }, e=>handlePrivateSyncError('directory',e)));
   }else{
     privateListeners.push(dbFS.collection('userDirectory')
