@@ -137,23 +137,11 @@ function attachPrivateListeners(){
     refreshUI();
   }, e=>handlePrivateSyncError('profile',e)));
   // Contact cards live separately from full profiles, so messaging never needs
-  // access to email addresses, phone numbers, or approval history.
-  // Admin accounts often have no school set (school is optional at signup),
-  // so a plain school-scoped query would never surface the admin's card to
-  // regular users. Non-admins therefore run TWO listeners — their own school,
-  // plus a standing one for approved admins — merged into DB.directory.
-  let dirBySchool=[], dirAdmins=[];
-  function mergeDirectory(){ 
-    const seen=new Set(); DB.directory=[];
-    [...dirBySchool,...dirAdmins].forEach(u=>{ if(!seen.has(u.id)){ seen.add(u.id); DB.directory.push(u); } });
-    onDirectoryUpdated();
-  }
-  // 'messages' sits in refreshUI's skip list (see refreshUI below), so a plain
-  // refreshUI() call here would silently do nothing while someone has the
-  // Messages page open — the contact list and any already-open chat header
-  // would stay stuck on stale/"Unknown user" data forever, even after the
-  // real directory finishes loading a moment later. Patch those spots directly,
-  // same pattern already used for tickets/conversations/groups below.
+  // access to email addresses, phone numbers, or approval history. Visibility
+  // is NOT school-scoped (see firestore.rules) — the New Message picker lets
+  // anyone message anyone, so every approved user needs the full directory.
+  // Admins additionally see non-approved cards (pending/rejected) for account
+  // management, so they still get the unfiltered collection.
   function onDirectoryUpdated(){
     refreshUI();
     if(uiState.page==='messages'){
@@ -167,21 +155,13 @@ function attachPrivateListeners(){
       if(nc && typeof filterNewChatList==='function') filterNewChatList();
     }
   }
-  if(currentProfile.role==='admin'){
-    privateListeners.push(dbFS.collection('userDirectory').onSnapshot(snap=>{
-      DB.directory=snap.docs.map(d=>({id:d.id,...d.data()}));
-      onDirectoryUpdated();
-    }, e=>handlePrivateSyncError('directory',e)));
-  }else{
-    privateListeners.push(dbFS.collection('userDirectory')
-      .where('school','==',currentProfile.school||'').where('status','==','approved')
-      .onSnapshot(snap=>{ dirBySchool=snap.docs.map(d=>({id:d.id,...d.data()})); mergeDirectory(); },
-        e=>handlePrivateSyncError('directory',e)));
-    privateListeners.push(dbFS.collection('userDirectory')
-      .where('role','==','admin').where('status','==','approved')
-      .onSnapshot(snap=>{ dirAdmins=snap.docs.map(d=>({id:d.id,...d.data()})); mergeDirectory(); },
-        e=>handlePrivateSyncError('directory',e)));
-  }
+  const directoryQuery=currentProfile.role==='admin'
+    ? dbFS.collection('userDirectory')
+    : dbFS.collection('userDirectory').where('status','==','approved');
+  privateListeners.push(directoryQuery.onSnapshot(snap=>{
+    DB.directory=snap.docs.map(d=>({id:d.id,...d.data()}));
+    onDirectoryUpdated();
+  }, e=>handlePrivateSyncError('directory',e)));
   privateListeners.push(dbFS.collection('tests').onSnapshot(snap=>{
     DB.tests=snap.docs.map(d=>({id:d.id,...d.data()}));
     refreshUI();
@@ -622,7 +602,7 @@ function contactDirectory(){
   // An admin already has permission to see the full user list. Use it as a
   // safe migration fallback until the minimal directory has been populated.
   const source=me.role==='admin' ? DB.users : DB.directory;
-  return source.filter(u=>u.status==='approved'&&u.id!==me.id&&(me.role==='admin'||u.role==='admin'||u.school===me.school));
+  return source.filter(u=>u.status==='approved'&&u.id!==me.id);
 }
 function testById(id){return DB.tests.find(x=>x.id===id);}
 function testAttempts(testId){return DB.attempts.filter(a=>a.testId===testId);}
