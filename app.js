@@ -4,11 +4,9 @@
    3. Build > Authentication -> Get started -> Sign-in method -> enable "Email/Password"
    4. Build > Firestore Database -> Create database (any region, start in production mode)
    5. Firestore -> Rules -> paste the contents of firestore.rules (provided alongside this file) -> Publish
-   6. Open this HTML file. Register your own account first (any role), then in the Firebase
-      Console -> Firestore -> users -> open your user document -> manually set role:"admin"
-      and status:"approved". That's your one-time admin bootstrap step. Every other rule
-      already correctly requires admin approval, so this manual step is done on purpose —
-      it's what keeps random visitors from being able to grant themselves admin.
+   6. First-admin auto-bootstrap is intentionally disabled. Use the trusted Admin SDK
+      command in SECURITY_DEPLOYMENT.md to grant the first admin custom claim and approve
+      that profile. Never grant administrator access from this browser.
 */
 const firebaseConfig = {
   apiKey: "AIzaSyCt6s5nMB4bS6_tKYOu8U5ERH7-Y9yP9qU",
@@ -48,6 +46,10 @@ let studyMaterialsListener=null, pollsListener=null;
 let materialCommentListeners={}, pollVoteListeners={};
 let privatePermissionHandled=false;
 let directoryBackfillStarted=false;
+let mfaRecaptchaVerifier=null;
+let mfaVerificationId=null;
+let mfaLoginResolver=null;
+let mfaMode=null;
 
 function uid(pre){return (pre||'id')+'_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4);}
 function nowISO(){return new Date().toISOString();}
@@ -462,7 +464,8 @@ async function doLogin(){
     // onAuthStateChanged picks it up from here: fetches the profile, checks
     // status, and either calls enterApp() or signs back out with a toast.
   }catch(e){
-    toast(friendlyError(e),'error');
+    if(e.code==='auth/multi-factor-auth-required') await beginMfaLogin(e.resolver);
+    else toast(friendlyError(e),'error');
   }finally{
     if(btn){btn.disabled=false; btn.textContent='Log In';}
   }
@@ -485,6 +488,10 @@ function enterApp(){
   document.getElementById('tbAvatarBtn').textContent=u.name.charAt(0).toUpperCase();
   buildNav();
   goPage(u.role==='admin'?'dashboard':'dashboard');
+  if(sessionStorage.getItem('prephub_mfa_change_pending')==='1'){
+    goPage('notifications');
+    toast('Old number verified. Enter and verify your new number now.','success');
+  }
 }
 function buildNav(){
   const u=currentUser();
@@ -511,6 +518,7 @@ function buildNav(){
       {p:'supporttickets',icon:'🆘',label:'Support Tickets',badge:openTicketCount()||null},
       {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
       {sec:''},
+      {p:'notifications',icon:'🔐',label:'Enable OTP Verification'},
       {p:'profile',icon:'⚙️',label:'My Profile'}
     ];
   } else if(u.role==='teacher'){
@@ -530,6 +538,7 @@ function buildNav(){
       {p:'support',icon:'🆘',label:'Help & Support'},
       {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
       {sec:''},
+      {p:'notifications',icon:'🔐',label:'Enable OTP Verification'},
       {p:'profile',icon:'⚙️',label:'My Profile'}
     ];
   } else {
@@ -550,6 +559,7 @@ function buildNav(){
       {p:'support',icon:'🆘',label:'Help & Support'},
       {p:'messages',icon:'💬',label:'Messages',badge:inviteCount||null},
       {sec:''},
+      {p:'notifications',icon:'🔐',label:'Enable OTP Verification'},
       {p:'profile',icon:'⚙️',label:'My Profile'}
     ];
   }
@@ -571,7 +581,7 @@ function goPage(page,params){
   const titles={dashboard:'Dashboard',approvals:'Pending Approvals',users:'Manage Users',registry:'Schools & Classes',
     alltests:'All Tests',analytics:'Analytics',createtest:'Create Test / DPP',mytests:'My Tests',available:'Available Tests',
     results:'My Results',profile:'My Profile',testrunner:'Attempt Test',testreview:'Test Review',testanalytics:'Test Analytics',edittest:'Edit Test',
-    support:'Help & Support',supporttickets:'Support Tickets',messages:'Messages',materials:'Study Materials',examprep:'Exam Prep Guides',polls:'Class Polls',progress:'My Progress',aidoubt:'AI Doubt Solving'};
+    support:'Help & Support',supporttickets:'Support Tickets',messages:'Messages',materials:'Study Materials',examprep:'Exam Prep Guides',polls:'Class Polls',progress:'My Progress',aidoubt:'AI Doubt Solving',notifications:'Enable OTP Verification'};
   document.getElementById('pageTitle').textContent=titles[page]||'PrepHub';
   render();
 }
@@ -601,7 +611,8 @@ function render(){
     examprep: (el)=>renderLearningResources(el,'exam-prep'),
     polls: renderPolls,
     progress: renderStudentProgress,
-    aidoubt: renderAiDoubt
+    aidoubt: renderAiDoubt,
+    notifications: renderNotifications
   };
   c.innerHTML='';
   (fns[uiState.page]||renderNotFound)(c);
@@ -2862,7 +2873,108 @@ async function sendChatMessage(){
   }
 }
 
-/* ============ INIT ============ */
+/* ============ OPTIONAL FIREBASE OTP / MFA ============ */
+function validE164(phone){return /^\+[1-9]\d{7,14}$/.test(phone);}
+function enrolledPhoneFactor(){return auth.currentUser&&auth.currentUser.multiFactor.enrolledFactors.find(f=>f.factorId==='phone');}
+function clearMfaRecaptcha(){if(mfaRecaptchaVerifier){mfaRecaptchaVerifier.clear();mfaRecaptchaVerifier=null;}}
+function renderNotifications(c){
+  const factor=enrolledPhoneFactor(), changing=sessionStorage.getItem('prephub_mfa_change_pending')==='1';
+  c.innerHTML=`<div class="page-header"><h2>Enable OTP Verification</h2><p>Optional extra login security. When enabled, Firebase asks for an SMS OTP after your password every time you log in.</p></div><div class="card" style="max-width:680px;">
+  <div class="g2"><div><strong>OTP login security</strong><div class="hint">${factor?'Enabled for '+esc(factor.phoneNumber||'your verified number'):'Not enabled — password-only login remains active.'}</div></div><span class="badge ${factor?'b-approved':'b-pending'}">${factor?'Enabled':'Optional'}</span></div>
+  ${factor&&!changing?`<div class="modal-btns" style="justify-content:flex-start;"><button class="btn btn-primary" onclick="startMfaNumberChange()">Change mobile number</button><button class="btn btn-danger" onclick="disableMfaOtp()">Disable OTP verification</button></div>`:''}
+  ${!factor||changing?`<div class="sep"></div><p class="hint">${changing?'Your old number was verified during this fresh login. Now verify the new number.':'Choose the number where you want to receive login OTPs.'}</p><div class="field"><label>Mobile number with country code</label><input id="mfaPhone" type="tel" placeholder="+919876543210" autocomplete="tel"></div><div id="mfaEnrollRecaptcha"></div><button class="btn btn-primary" id="mfaSendBtn" onclick="sendMfaEnrollmentOtp()">Send OTP</button><div id="mfaEnrollCodeWrap" style="display:none;"><div class="field"><label>OTP code</label><input id="mfaEnrollCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div><button class="btn btn-primary" onclick="completeMfaEnrollment()">Verify and enable OTP login</button></div>`:''}
+  </div>`;
+}
+async function sendMfaEnrollmentOtp(){
+  const phone=document.getElementById('mfaPhone').value.trim();
+  if(!validE164(phone)){toast('Use a number like +919876543210.','error');return;}
+  if(!auth.currentUser.emailVerified){
+    await auth.currentUser.sendEmailVerification();
+    toast('First verify your email address. We sent a verification link to your email.','warn');
+    return;
+  }
+  const last=Number(sessionStorage.getItem('prephub_mfa_otp_at')||0);if(Date.now()-last<60000){toast('Please wait one minute before requesting another OTP.','warn');return;}
+  const btn=document.getElementById('mfaSendBtn');btn.disabled=true;
+  try{clearMfaRecaptcha();mfaRecaptchaVerifier=new firebase.auth.RecaptchaVerifier('mfaEnrollRecaptcha',{size:'invisible'});const session=await auth.currentUser.multiFactor.getSession();mfaVerificationId=await new firebase.auth.PhoneAuthProvider().verifyPhoneNumber({phoneNumber:phone,session},mfaRecaptchaVerifier);sessionStorage.setItem('prephub_mfa_otp_at',String(Date.now()));document.getElementById('mfaEnrollCodeWrap').style.display='block';toast('OTP sent.','success');}
+  catch(e){toast('Could not send OTP: '+friendlyError(e),'error');clearMfaRecaptcha();}finally{btn.disabled=false;}
+}
+async function completeMfaEnrollment(){
+  const code=document.getElementById('mfaEnrollCode').value.trim();if(!/^\d{6}$/.test(code)||!mfaVerificationId){toast('Enter the six-digit OTP.','error');return;}
+  try{const old=enrolledPhoneFactor();const credential=firebase.auth.PhoneAuthProvider.credential(mfaVerificationId,code);await auth.currentUser.multiFactor.enroll(firebase.auth.PhoneMultiFactorGenerator.assertion(credential),'Login OTP');if(old)await auth.currentUser.multiFactor.unenroll(old);sessionStorage.removeItem('prephub_mfa_change_pending');clearMfaRecaptcha();toast('OTP login security enabled.','success');render();}
+  catch(e){toast('Could not enable OTP verification: '+friendlyError(e),'error');}
+}
+function startMfaNumberChange(){sessionStorage.setItem('prephub_mfa_change_pending','1');toast('Log in again and enter the OTP on your old number first.','info');doLogout();}
+async function disableMfaOtp(){const factor=enrolledPhoneFactor();if(!factor)return;try{await auth.currentUser.multiFactor.unenroll(factor);toast('OTP verification disabled.','success');render();}catch(e){toast('Please log in again before changing OTP security: '+friendlyError(e),'error');}}
+async function beginMfaLogin(resolver){
+  mfaLoginResolver=resolver;const factor=resolver.hints.find(f=>f.factorId==='phone');if(!factor){toast('No supported OTP method on this account.','error');return;}
+  document.getElementById('mfaLoginOverlay').classList.remove('hidden');document.getElementById('mfaLoginText').textContent='We will send a code to '+(factor.phoneNumber||'your verified number')+'.';
+  try{clearMfaRecaptcha();mfaRecaptchaVerifier=new firebase.auth.RecaptchaVerifier('mfaLoginRecaptcha',{size:'invisible'});mfaVerificationId=await new firebase.auth.PhoneAuthProvider().verifyPhoneNumber({multiFactorHint:factor,session:resolver.session},mfaRecaptchaVerifier);toast('OTP sent.','success');}
+  catch(e){cancelMfaLogin();toast('Could not send OTP: '+friendlyError(e),'error');}
+}
+async function completeMfaLogin(){const code=document.getElementById('mfaLoginCode').value.trim();if(!/^\d{6}$/.test(code)||!mfaLoginResolver){toast('Enter the six-digit OTP.','error');return;}try{const credential=firebase.auth.PhoneAuthProvider.credential(mfaVerificationId,code);await mfaLoginResolver.resolveSignIn(firebase.auth.PhoneMultiFactorGenerator.assertion(credential));cancelMfaLogin();}catch(e){toast('OTP verification failed: '+friendlyError(e),'error');}}
+function cancelMfaLogin(){document.getElementById('mfaLoginOverlay').classList.add('hidden');mfaLoginResolver=null;mfaVerificationId=null;clearMfaRecaptcha();}
+
+/* ============ LEGACY NOTIFICATION CODE (unreachable; retained only until the next cleanup) ============ */
+function legacyRenderNotifications(c){
+  const pref=DB.notificationPreference;
+  const verified=Boolean(pref&&pref.phoneVerifiedAt&&pref.verifiedPhone);
+  const enabled=Boolean(pref&&pref.enabled&&verified);
+  c.innerHTML=`<div class="page-header"><h2>Enable Notifications</h2><p>Verify your phone with Firebase before choosing whether PrepHub may send you SMS notifications.</p></div>
+  <div class="card" style="max-width:680px;">
+    <div class="g2"><div><strong>Mobile verification</strong><div class="hint">${verified?'Verified: '+esc(pref.verifiedPhone):'Not verified'}</div></div><span class="badge ${verified?'b-approved':'b-pending'}">${verified?'Verified':'Not verified'}</span></div>
+    <div class="sep"></div>
+    <div class="g2"><div><strong>SMS notifications</strong><div class="hint">${enabled?'Enabled — you can opt out at any time.':'Disabled'}</div></div><span class="badge ${enabled?'b-approved':'b-rejected'}">${enabled?'Enabled':'Disabled'}</span></div>
+    ${verified?`<div class="modal-btns" style="justify-content:flex-start;"><button class="btn ${enabled?'btn-danger':'btn-primary'}" onclick="setNotificationsEnabled(${enabled?'false':'true'})">${enabled?'Disable notifications':'Enable notifications'}</button></div>`:`
+    <div class="sep"></div><div class="field"><label>Mobile number (E.164)</label><input id="notificationPhone" type="tel" placeholder="+919876543210" autocomplete="tel"></div><div id="phoneRecaptcha"></div><div class="modal-btns" style="justify-content:flex-start;"><button class="btn btn-primary" id="sendPhoneOtpBtn" onclick="sendPhoneOtp()">Send verification code</button></div><div id="phoneOtpWrap" style="display:none;"><div class="field"><label>Verification code</label><input id="phoneOtp" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div><button class="btn btn-primary" onclick="confirmPhoneOtp()">Verify mobile number</button></div>`}
+  </div>`;
+}
+function legacyValidE164(phone){return /^\+[1-9]\d{7,14}$/.test(phone);}
+async function legacySendPhoneOtp(){
+  if(phoneVerificationBusy)return;
+  const phone=document.getElementById('notificationPhone').value.trim();
+  if(!validE164(phone)){toast('Use your country code, for example +919876543210.','error');return;}
+  const last=Number(sessionStorage.getItem('prephub_phone_otp_at')||0);
+  if(Date.now()-last<PHONE_OTP_COOLDOWN_MS){toast('Please wait before requesting another code.','warn');return;}
+  phoneVerificationBusy=true;
+  const btn=document.getElementById('sendPhoneOtpBtn'); btn.disabled=true;
+  try{
+    if(phoneRecaptchaVerifier){phoneRecaptchaVerifier.clear();}
+    phoneRecaptchaVerifier=new firebase.auth.RecaptchaVerifier('phoneRecaptcha',{size:'invisible'});
+    phoneConfirmationResult=await auth.signInWithPhoneNumber(phone,phoneRecaptchaVerifier);
+    sessionStorage.setItem('prephub_phone_otp_at',String(Date.now()));
+    document.getElementById('phoneOtpWrap').style.display='block';
+    toast('Verification code sent.','success');
+  }catch(e){toast('Could not send verification code: '+friendlyError(e),'error'); if(phoneRecaptchaVerifier){phoneRecaptchaVerifier.clear();phoneRecaptchaVerifier=null;}}
+  finally{phoneVerificationBusy=false;btn.disabled=false;}
+}
+async function confirmPhoneOtp(){
+  const code=document.getElementById('phoneOtp').value.trim();
+  if(!/^\d{6}$/.test(code)){toast('Enter the six-digit verification code.','error');return;}
+  if(!phoneConfirmationResult){toast('Request a new code first.','error');return;}
+  try{
+    const credential=firebase.auth.PhoneAuthProvider.credential(phoneConfirmationResult.verificationId,code);
+    await auth.currentUser.linkWithCredential(credential);
+    await auth.currentUser.getIdToken(true);
+    currentAuthClaims=(await auth.currentUser.getIdTokenResult()).claims||{};
+    throw new Error('Legacy notification flow is disabled.');
+    phoneConfirmationResult=null;
+    toast('Mobile number verified. You can now choose to enable notifications.','success');
+  }catch(e){toast('Verification failed: '+friendlyError(e),'error');}
+}
+async function setNotificationsEnabled(enabled){
+  try{throw new Error('Legacy notification flow is disabled.');
+  catch(e){toast('Could not update notifications: '+friendlyError(e),'error');}
+}
+function legacyRenderAdminSms(c){
+  if(currentAuthClaims.admin!==true){c.innerHTML='<div class="empty"><div class="e-icon">🔒</div><div class="e-title">Restricted</div><div class="e-sub">Server-issued administrator authorization is required.</div></div>';return;}
+  c.innerHTML=`<div class="page-header"><h2>SMS Console</h2><p>Send a single operational message only to a verified user who has opted in.</p></div><div class="card" style="max-width:680px;"><div class="field"><label>Recipient user ID</label><input id="smsRecipientUid" maxlength="128"></div><div class="field"><label>Message</label><textarea id="smsMessage" maxlength="320" placeholder="Up to 320 characters"></textarea></div><button class="btn btn-primary" onclick="sendAdminSms()">Send SMS</button><p class="hint" style="margin-top:10px;">All requests are server-audited and rate-limited. Bulk sends are not supported.</p></div>`;
+}
+async function legacySendAdminSms(){
+  const recipientUid=document.getElementById('smsRecipientUid').value.trim(); const message=document.getElementById('smsMessage').value.trim();
+  if(!recipientUid||!message){toast('Enter a recipient and message.','error');return;}
+  try{throw new Error('Legacy SMS flow is disabled.');
+  catch(e){toast('SMS was not sent: '+friendlyError(e),'error');}
+}
 function init(){
   initDark();
   attachPublicListeners(); // schools/classes, needed on the registration form pre-login
