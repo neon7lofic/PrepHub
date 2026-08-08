@@ -20,11 +20,12 @@ const firebaseConfig = {
   measurementId: "G-HYQJVRPV73"
 };
 firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
 const analytics = firebase.analytics();
 // App Check — verifies requests come from your real site, not a bot/scraper
 const appCheck = firebase.appCheck();
 appCheck.activate('6LekOHstAAAAAPAzWGFDXS8oAKrt4M7jRuoXJ1rf', true); // true = auto-refresh tokens
-const auth = firebase.auth();
+
 const dbFS = firebase.firestore();
 // Each browser tab gets its own independent login instead of sharing one login
 // across every open tab. Trade-off: closing a tab and opening a fresh one means
