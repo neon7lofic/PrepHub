@@ -16,9 +16,11 @@ const firebaseConfig = {
   projectId: "prephub-f9dbd",
   storageBucket: "prephub-f9dbd.firebasestorage.app",
   messagingSenderId: "63924321576",
-  appId: "1:63924321576:web:b1840e34337b3b8771641d"
+  appId: "1:63924321576:web:b1840e34337b3b8771641d",
+  measurementId: "G-HYQJVRPV73"
 };
 firebase.initializeApp(firebaseConfig);
+const analytics = firebase.analytics();
 // App Check — verifies requests come from your real site, not a bot/scraper
 const appCheck = firebase.appCheck();
 appCheck.activate('6LekOHstAAAAAPAzWGFDXS8oAKrt4M7jRuoXJ1rf', true); // true = auto-refresh tokens
