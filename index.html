@@ -73,6 +73,17 @@
   </div>
 </div>
 
+<!-- LOGIN OTP: shown only for users who chose optional OTP security -->
+<div class="overlay hidden" id="mfaLoginOverlay" style="z-index:700;">
+  <div class="modal">
+    <h3>Verify your login</h3>
+    <p class="modal-sub" id="mfaLoginText">We will send a code to your verified mobile number.</p>
+    <div id="mfaLoginRecaptcha"></div>
+    <div class="field"><label>OTP code</label><input id="mfaLoginCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6-digit code"></div>
+    <div class="modal-btns"><button class="btn btn-ghost" onclick="cancelMfaLogin()">Cancel</button><button class="btn btn-primary" id="mfaLoginVerifyBtn" onclick="completeMfaLogin()">Verify &amp; Log In</button></div>
+  </div>
+</div>
+
 <!-- MAIN SHELL -->
 <div id="shell">
   <div id="sidebar">
